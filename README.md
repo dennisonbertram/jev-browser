@@ -94,7 +94,7 @@ Give your model the seven tool definitions and route its calls through the
 host:
 
 ```ts
-import { createToolHost } from "jev-browser";
+import { createToolHost } from "@dennisonbertram/jev-browser";
 
 const host = createToolHost({
   // A Playwright BrowserContext you own.
@@ -133,7 +133,7 @@ browsers, session state across processes, and telemetry.
 Add it to a project:
 
 ```sh
-npm install jev-browser
+npm install @dennisonbertram/jev-browser
 npx playwright install chromium
 ```
 

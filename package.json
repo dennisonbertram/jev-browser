@@ -1,12 +1,35 @@
 {
-  "name": "jev-browser",
+  "name": "@dennisonbertram/jev-browser",
   "version": "0.1.0",
   "description": "A fast browser agent. It picks an action from a numbered table of the page's real controls instead of writing a selector, so one step is a single small-model call.",
-  "type": "module",
+  "keywords": [
+    "browser-agent",
+    "browser-automation",
+    "playwright",
+    "agent",
+    "ai-agent",
+    "web-agent",
+    "shadow-dom",
+    "accessibility",
+    "llm"
+  ],
   "license": "MIT",
+  "author": "Dennison Bertram",
+  "homepage": "https://github.com/dennisonbertram/jev-browser#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dennisonbertram/jev-browser.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dennisonbertram/jev-browser/issues"
+  },
+  "type": "module",
   "engines": {
     "node": ">=22"
   },
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -23,6 +46,9 @@
     "docs/integration.md",
     "docs/accessible-names.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "check": "npm run types && npm run test",
     "types": "tsc --noEmit",
@@ -41,28 +67,5 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.0",
     "vitest": "^4.1.0"
-  },
-  "keywords": [
-    "browser-agent",
-    "browser-automation",
-    "playwright",
-    "agent",
-    "ai-agent",
-    "web-agent",
-    "shadow-dom",
-    "accessibility",
-    "llm"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/dennisonbertram/jev-browser.git"
-  },
-  "homepage": "https://github.com/dennisonbertram/jev-browser#readme",
-  "bugs": {
-    "url": "https://github.com/dennisonbertram/jev-browser/issues"
-  },
-  "author": "Dennison Bertram",
-  "sideEffects": false,
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts"
+  }
 }
