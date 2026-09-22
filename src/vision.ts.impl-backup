@@ -42,19 +42,14 @@ export async function screenshotCanvas(
   const entry = canvasAt(observation, canvasIndex);
   const element = await resolveCanvas(page, entry.ref, canvasIndex);
   try {
+    // Element screenshot covers the element's own box and nothing else, and
+    // scrolls it into view first, so an offscreen region still comes back.
     await element.scrollIntoViewIfNeeded();
-    const before = await element.boundingBox();
-    if (!before || !isUsableRect(before)) {
-      throw new StalePage(`StalePage: canvas ${canvasIndex} is no longer visible`);
+    const rect = await element.boundingBox();
+    if (!rect) {
+      throw new StalePage(`canvas ${canvasIndex} is no longer visible`);
     }
-    const rect = enclosingRect(before);
-    // Element screenshots capture the composited page inside the element's
-    // box, so content painted over the canvas is included in the picture.
     const image = await element.screenshot({ type: "png" });
-    const after = await element.boundingBox();
-    if (!after || !isUsableRect(after) || !sameRect(rect, enclosingRect(after))) {
-      throw new StalePage(`StalePage: canvas ${canvasIndex} moved during capture`);
-    }
     const scale = await page.evaluate(() => window.devicePixelRatio);
     return { image, rect, scale };
   } finally {
@@ -78,8 +73,6 @@ export async function clickInCanvas(
   if (
     !Number.isFinite(x) ||
     !Number.isFinite(y) ||
-    Object.is(x, -0) ||
-    Object.is(y, -0) ||
     x < 0 ||
     x > 1 ||
     y < 0 ||
@@ -89,108 +82,29 @@ export async function clickInCanvas(
       `x and y are fractions of the region from 0 to 1; got (${x}, ${y})`
     );
   }
-
   const element = await resolveCanvas(page, entry.ref, canvasIndex);
   try {
-    await element.scrollIntoViewIfNeeded();
-
-    let rect = await element.boundingBox();
-    if (!rect || !isUsableRect(rect)) {
-      throw new StalePage(`StalePage: canvas ${canvasIndex} is no longer visible`);
+    // Re-read the live position: the stored rect is from observation time and
+    // the page may have scrolled since. boundingBox() is viewport-relative in
+    // top-document coordinates, which is what page.mouse clicks in.
+    const rect = await element.boundingBox();
+    if (!rect) {
+      throw new StalePage(`canvas ${canvasIndex} is no longer visible`);
     }
-
-    let point = pointInRect(rect, x, y);
-    const viewport = await page.evaluate(() => ({
-      width: window.innerWidth,
-      height: window.innerHeight,
-    }));
-    if (
-      point.x < 0 ||
-      point.y < 0 ||
-      point.x >= viewport.width ||
-      point.y >= viewport.height
-    ) {
-      await page.evaluate(({ point }) => {
-        window.scrollBy(
-          point.x - window.innerWidth / 2,
-          point.y - window.innerHeight / 2
-        );
-      }, { point });
-      await element.scrollIntoViewIfNeeded();
-      rect = await element.boundingBox();
-      if (!rect || !isUsableRect(rect)) {
-        throw new StalePage(`StalePage: canvas ${canvasIndex} is no longer visible`);
-      }
-      point = pointInRect(rect, x, y);
-    }
-
-    const hit = await element.evaluate(
-      (canvas, coordinates) => {
-        const hit = document.elementFromPoint(coordinates.x, coordinates.y);
-        return hit === canvas || (!!hit && canvas.contains(hit));
-      },
-      point
-    ).catch(() => false);
-    if (!hit) {
-      throw new StalePage(
-        `StalePage: canvas ${canvasIndex} is covered or not at the point`
-      );
-    }
-
-    await page.mouse.click(point.x, point.y);
+    await page.mouse.click(rect.x + x * rect.width, rect.y + y * rect.height);
   } finally {
     await element.dispose().catch(() => undefined);
   }
 }
 
-function pointInRect(rect: Rect, x: number, y: number): { x: number; y: number } {
-  return {
-    x: Math.min(rect.x + rect.width - 1, rect.x + x * rect.width),
-    y: Math.min(rect.y + rect.height - 1, rect.y + y * rect.height),
-  };
-}
-
-function enclosingRect(rect: Rect): Rect {
-  const x = Math.floor(rect.x);
-  const y = Math.floor(rect.y);
-  const right = Math.ceil(rect.x + rect.width);
-  const bottom = Math.ceil(rect.y + rect.height);
-  return { x, y, width: right - x, height: bottom - y };
-}
-
-function sameRect(a: Rect, b: Rect): boolean {
-  return (
-    a.x === b.x &&
-    a.y === b.y &&
-    a.width === b.width &&
-    a.height === b.height
-  );
-}
-
-function isUsableRect(rect: Rect): boolean {
-  return (
-    Number.isFinite(rect.x) &&
-    Number.isFinite(rect.y) &&
-    Number.isFinite(rect.width) &&
-    Number.isFinite(rect.height) &&
-    rect.width >= 1 &&
-    rect.height >= 1
-  );
-}
-
 function canvasAt(observation: PageObservation, canvasIndex: number) {
-  if (
-    typeof canvasIndex !== "number" ||
-    !Number.isInteger(canvasIndex) ||
-    Object.is(canvasIndex, -0) ||
-    canvasIndex < 0 ||
-    canvasIndex >= observation.canvases.length
-  ) {
+  const entry = observation.canvases[canvasIndex];
+  if (!entry) {
     throw new RangeError(
       `canvasIndex ${canvasIndex} is not in the observation (${observation.canvases.length} canvases observed)`
     );
   }
-  return observation.canvases[canvasIndex]!;
+  return entry;
 }
 
 /**
@@ -219,7 +133,7 @@ async function resolveCanvas(
     }
   }
   if (!frame) {
-    throw new StalePage(`StalePage: canvas ${canvasIndex}'s frame is gone`);
+    throw new StalePage(`canvas ${canvasIndex}'s frame is gone`);
   }
   const handle = await frame
     .evaluateHandle(
@@ -235,7 +149,7 @@ async function resolveCanvas(
   const element = handle?.asElement() ?? null;
   if (!element) {
     await handle?.dispose().catch(() => undefined);
-    throw new StalePage(`StalePage: canvas ${canvasIndex} is gone from the page`);
+    throw new StalePage(`canvas ${canvasIndex} is gone from the page`);
   }
   return element;
 }

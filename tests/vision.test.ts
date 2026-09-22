@@ -30,100 +30,117 @@ afterAll(async () => {
   if (server) await stop(server.server);
 });
 
-async function open(): Promise<BrowserContext> {
+async function open(path = "canvas-two.html"): Promise<BrowserContext> {
   const context = await browser.newContext({
     viewport: { width: 1120, height: 780 },
   });
   const page = await context.newPage();
-  await page.goto(`http://localhost:${PRIMARY}/canvas.html`, {
+  await page.goto(`http://localhost:${PRIMARY}/${path}`, {
     waitUntil: "load",
   });
   return context;
 }
 
+function pngSize(image: Buffer): { width: number; height: number } {
+  return {
+    width: image.readUInt32BE(16),
+    height: image.readUInt32BE(20),
+  };
+}
+
 describe("vision", () => {
-  it("screenshotPage returns PNG bytes covering the visible page", async () => {
+  it("selects the requested canvas index", async () => {
     const context = await open();
     try {
+      const observation = await observe(context);
       const page = getActivePage(context)!;
-      const shot = await screenshotPage(page);
-      expect(Array.from(shot.image.subarray(0, 8))).toEqual(PNG_SIGNATURE);
-      expect(shot.rect.width).toBeGreaterThan(0);
+      await clickInCanvas(page, observation, 1, 0.5, 0.5);
+      await expect.poll(() => page.locator("#canvas-one-result").textContent()).toBe("one");
+      expect(await page.locator("#canvas-zero-result").textContent()).toBe("zero untouched");
     } finally {
       await context.close();
     }
   });
 
-  it("screenshotCanvas covers the observed canvas region and nothing else", async () => {
+  it("screenshotCanvas is the region and screenshotPage is the viewport", async () => {
     const context = await open();
     try {
       const observation = await observe(context);
-      expect(observation.canvases.length).toBeGreaterThanOrEqual(1);
       const page = getActivePage(context)!;
-      const shot = await screenshotCanvas(page, observation, 0);
-      expect(Array.from(shot.image.subarray(0, 8))).toEqual(PNG_SIGNATURE);
-      const box = await page.evaluate(() => {
-        const el = document.getElementById("picker");
-        if (!el) throw new Error("fixture changed: #picker is gone");
-        const r = el.getBoundingClientRect();
-        return { x: r.x, y: r.y, width: r.width, height: r.height };
-      });
-      for (const key of ["x", "y", "width", "height"] as const) {
-        expect(
-          Math.abs(shot.rect[key] - box[key]),
-          `rect.${key} must match the canvas bounding box within 2px`
-        ).toBeLessThanOrEqual(2);
+      const region = await screenshotCanvas(page, observation, 1);
+      const whole = await screenshotPage(page);
+      const dpr = await page.evaluate(() => window.devicePixelRatio);
+      const box = await page.locator("#canvas-one").boundingBox();
+      expect(box).not.toBeNull();
+      expect(Math.abs(pngSize(region.image).width - box!.width * dpr)).toBeLessThanOrEqual(2);
+      expect(Math.abs(pngSize(region.image).height - box!.height * dpr)).toBeLessThanOrEqual(2);
+      expect(Math.abs(pngSize(whole.image).width - 1120 * dpr)).toBeLessThanOrEqual(2);
+      expect(Math.abs(pngSize(whole.image).height - 780 * dpr)).toBeLessThanOrEqual(2);
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("fraction one remains inside the selected canvas", async () => {
+    const context = await open();
+    try {
+      const observation = await observe(context);
+      const page = getActivePage(context)!;
+      await clickInCanvas(page, observation, 1, 1, 1);
+      await expect.poll(() => page.locator("#canvas-one-result").textContent()).toBe("one");
+      expect(await page.locator("#canvas-zero-result").textContent()).toBe("zero untouched");
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("rejects every invalid fraction without changing the page", async () => {
+    const context = await open();
+    try {
+      const observation = await observe(context);
+      const page = getActivePage(context)!;
+      for (const value of [NaN, Infinity, -0, -0.1, 1.5]) {
+        await expect(clickInCanvas(page, observation, 0, value, 0.5)).rejects.toThrow();
+        await expect(clickInCanvas(page, observation, 0, 0.5, value)).rejects.toThrow();
+        expect(await page.locator("#canvas-zero-result").textContent()).toBe("zero untouched");
+        expect(await page.locator("#canvas-one-result").textContent()).toBe("one untouched");
       }
     } finally {
       await context.close();
     }
   });
 
-  it("clickInCanvas reaches the drawn button through a fraction of the region", async () => {
+  it("rejects every invalid index without changing the page", async () => {
     const context = await open();
     try {
       const observation = await observe(context);
       const page = getActivePage(context)!;
-      // The drawn button occupies x 10..70, y 40..64 of a 200x80 canvas;
-      // its centre as a fraction of the region:
-      const fx = (10 + 70) / 2 / 200;
-      const fy = (40 + 64) / 2 / 80;
-      await clickInCanvas(page, observation, 0, fx, fy);
-      await expect
-        .poll(() => page.locator("#canvas-result").textContent())
-        .toBe("date-picked");
+      for (const index of [-0, "0", 1.5, 99] as unknown[]) {
+        await expect(
+          clickInCanvas(page, observation, index as number, 0.5, 0.5)
+        ).rejects.toThrow();
+        expect(await page.locator("#canvas-zero-result").textContent()).toBe("zero untouched");
+        expect(await page.locator("#canvas-one-result").textContent()).toBe("one untouched");
+      }
     } finally {
       await context.close();
     }
   });
 
-  it("clickInCanvas rejects a canvasIndex the observation does not have", async () => {
+  it("rejects a covered canvas without clicking it", async () => {
     const context = await open();
     try {
       const observation = await observe(context);
       const page = getActivePage(context)!;
-      await expect(
-        clickInCanvas(page, observation, 99, 0.2, 0.65)
-      ).rejects.toThrow();
-      await expect
-        .poll(() => page.locator("#canvas-result").textContent())
-        .toBe("no date");
-    } finally {
-      await context.close();
-    }
-  });
-
-  it("clickInCanvas rejects a fraction outside 0 to 1", async () => {
-    const context = await open();
-    try {
-      const observation = await observe(context);
-      const page = getActivePage(context)!;
-      await expect(
-        clickInCanvas(page, observation, 0, 1.5, 0.65)
-      ).rejects.toThrow();
-      await expect
-        .poll(() => page.locator("#canvas-result").textContent())
-        .toBe("no date");
+      await page.evaluate(() => {
+        const cover = document.createElement("div");
+        cover.id = "cover";
+        cover.style.cssText =
+          "position:absolute;left:400px;top:180px;width:300px;height:120px;z-index:10;background:red";
+        document.body.appendChild(cover);
+      });
+      await expect(clickInCanvas(page, observation, 1, 0.5, 0.5)).rejects.toThrow("StalePage");
+      expect(await page.locator("#canvas-one-result").textContent()).toBe("one untouched");
     } finally {
       await context.close();
     }

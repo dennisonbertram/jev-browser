@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <style>
+      body { margin: 0; }
+      canvas { position: absolute; display: block; }
+      #canvas-zero { left: 80px; top: 80px; width: 200px; height: 80px; }
+      #canvas-one { left: 400px; top: 180px; width: 300px; height: 120px; }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas-zero" width="200" height="80"></canvas>
+    <canvas id="canvas-one" width="300" height="120"></canvas>
+    <div id="canvas-zero-result">zero untouched</div>
+    <div id="canvas-one-result">one untouched</div>
+    <script>
+      const zero = document.getElementById("canvas-zero");
+      const one = document.getElementById("canvas-one");
+      const zctx = zero.getContext("2d");
+      const octx = one.getContext("2d");
+      zctx.fillStyle = "#8ecae6";
+      zctx.fillRect(0, 0, zero.width, zero.height);
+      octx.fillStyle = "#ffb703";
+      octx.fillRect(0, 0, one.width, one.height);
+      zero.addEventListener("click", () => {
+        document.getElementById("canvas-zero-result").textContent = "zero";
+      });
+      one.addEventListener("click", () => {
+        document.getElementById("canvas-one-result").textContent = "one";
+      });
+    </script>
+  </body>
+</html>
