@@ -300,20 +300,37 @@ recorded here so they are not tried again:
 | Compare only the acting frame's marker in `fresh()` | 10.4 s, decisions rose |
 | Ask the classifier during the settle wait, keep the answer if the settled page matches | 10.0 s, 45% of answers usable |
 | Focus the chosen node directly when the click did not | 9.7 s, much wider spread |
+| Require a longer quiet window so fewer decisions go stale | 10.2 s, 4/5 |
 
-The first three relax what counts as a stale page, and each let the agent act
+The last of these is the interesting failure: it worked as intended, cutting
+decisions from 22 to 18, and still lost, because the extra settling cost more
+than the calls it saved. The first three relax what counts as a stale page, and each let the agent act
 on a page that had moved on, which cost more actions than it saved calls. The
 fourth cannot work in principle: the snapshot it asks from is taken during
 the settle, so it predates the very change being waited for. The freshness
 checks cost calls and earn them back.
 
-What remains is network. `connect` to the classifier from the machine these
-figures come from is 160 ms, so about 147 ms of each 225 ms call is a round
-trip and only about 75 ms is inference. `jev-ultrafast`'s reported 178 ms per
-call is less than our round trip alone, which means their figure was taken
-near the service. Run this library with a 30 ms round trip and the same 22
-calls cost 2.3 s rather than 5.0 s, which puts the journey near 6.3 s. That
-is arithmetic from the measured parts, not a result: it has not been run.
+Network is a smaller part of this than it first appears. The round trip to
+the classifier from the machine these figures come from is **78 ms**, the
+median of five samples, and a warm request on a kept-alive connection costs
+79 ms. Our calls average 227 ms, so roughly 150 ms of each is the service
+thinking, not the wire.
+
+Normalising the network away does not close the gap, so it is worth stating
+plainly rather than leaving as a get-out. Charging our 22 calls at the
+178 ms `jev-ultrafast` reports per call:
+
+| | calls | classifier | everything else | total |
+|---|---|---|---|---|
+| jev-ultrafast, reported | 17 | 3.03 s | 4.05 s | **7.07 s** |
+| this library, measured | 22 | 5.00 s | 3.87 s | **8.87 s** |
+| this library, at their per-call latency | 22 | 3.92 s | 3.87 s | **7.79 s** |
+
+We are ahead on everything that is not the classifier, by 0.18 s. At equal
+per-call latency we are still 0.71 s behind, and all of it is the five extra
+calls. Matching them means cutting the wasted decisions, not the wire. This
+assumes both use the same classifier service, which the per-call figures are
+consistent with but which has not been confirmed.
 
 ## Limits and risks
 
