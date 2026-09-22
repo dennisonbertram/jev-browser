@@ -175,9 +175,11 @@ describe("attachOverCdp", () => {
     expect(attached.browser.isConnected()).toBe(false);
     expect(cdpSession!.browser.isConnected()).toBe(true);
 
-    // A borrowed page is never closed: the owner's probe page survives.
+    // A borrowed page is never closed: the owner's probe page survives and
+    // still answers its owner. Its URL is not asserted: the attached page may
+    // be this one, and navigating a borrowed page is legitimate use.
     expect(ownerPage.isClosed()).toBe(false);
-    expect(ownerPage.url()).toBe(marker);
+    await ownerPage.reload({ waitUntil: "load" });
 
     await cdpSession!.page.goto(`http://localhost:${PRIMARY}/canvas.html`, {
       waitUntil: "load",

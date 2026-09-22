@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Login</title>
+  </head>
+  <body>
+    <input id="u" aria-label="Email" autocomplete="username">
+    <input id="p" type="password" aria-label="Password" autocomplete="current-password">
+    <button id="go">Sign in</button>
+    <p id="result">signed out</p>
+    <script>
+      document.querySelector("#go").addEventListener("click", () => {
+        document.querySelector("#result").textContent =
+          "signed-in:" + document.querySelector("#u").value;
+      });
+    </script>
+  </body>
+</html>

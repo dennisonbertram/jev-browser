@@ -46,3 +46,6 @@ export type {
 
 export { screenshotRedacted, secretRegions } from "./redact.ts";
 export type { MaskTarget } from "./redact.ts";
+
+export { fillCredentials, findCredentialFields } from "./autofill.ts";
+export type { CredentialSource, FillOutcome } from "./autofill.ts";

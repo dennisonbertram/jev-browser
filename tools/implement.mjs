@@ -27,7 +27,7 @@ const specPath = flag("spec");
 const files = (flag("files") ?? "").split(",").map((f) => f.trim()).filter(Boolean);
 const verify = flag("verify", "npx vitest run");
 const rounds = Number(flag("rounds", "3"));
-const model = flag("model", process.env.IMPL_MODEL ?? "meta/muse-spark-1.3");
+const model = flag("model", process.env.IMPL_MODEL ?? "gpt-5.6-luna-fast");
 // A retry should not start blind: pass the failures the last run left behind.
 const notes = flag("notes");
 if (!specPath || files.length === 0) {
@@ -83,21 +83,41 @@ for (let round = 1; round <= rounds; round += 1) {
   ].filter(Boolean).join("\n\n");
 
   process.stderr.write(`[round ${round}/${rounds}] asking ${model}...\n`);
-  const response = await fetch(`${BASE}/chat/completions`, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${KEY}` },
-    body: JSON.stringify({
-      model,
-      max_tokens: 32000,
-      messages: [
-        { role: "system", content: SYSTEM },
-        { role: "user", content: user },
-      ],
-    }),
+  // A transient network failure must not end the run: an unattended loop would
+  // stop having written nothing.
+  const body = JSON.stringify({
+    model,
+    max_tokens: 32000,
+    messages: [
+      { role: "system", content: SYSTEM },
+      { role: "user", content: user },
+    ],
   });
-  const json = await response.json();
-  if (!response.ok) {
-    console.error(`gateway ${response.status}: ${JSON.stringify(json).slice(0, 400)}`);
+  let response = null;
+  let json = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      response = await fetch(`${BASE}/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${KEY}` },
+        body,
+        signal: AbortSignal.timeout(600_000),
+      });
+      json = await response.json();
+      if (response.ok) break;
+      if (response.status === 401) {
+        console.error("gateway 401: the token expired. Refresh it and run again.");
+        process.exit(1);
+      }
+      process.stderr.write(`[round ${round}] gateway ${response.status}, attempt ${attempt}/3\n`);
+    } catch (error) {
+      process.stderr.write(`[round ${round}] ${String(error).slice(0, 120)}, attempt ${attempt}/3\n`);
+      response = null;
+    }
+    if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 5000));
+  }
+  if (!response?.ok || !json) {
+    console.error("the model could not be reached after three attempts");
     process.exit(1);
   }
   const text = json.choices?.[0]?.message?.content ?? "";

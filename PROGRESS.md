@@ -35,9 +35,9 @@ decision, not the browser layer, is what makes a task fast.
 | --- | --- | --- | --- |
 | S0 | Extraction, public API, CI | usable outside one repo | done |
 | S1 | Browser lifecycle | launch locally, attach to a remote CDP browser, dispose cleanly | done, reviewed, fixed |
-| S2 | Vision and coordinates | a control drawn on a canvas has no DOM node | done, review pending |
-| S3 | Screenshot redaction | an image must not carry a secret out of the process | in progress |
-| S4 | Credential autofill | log in without a model ever seeing a secret | to do |
+| S2 | Vision and coordinates | a control drawn on a canvas has no DOM node | built, reviewed, fixes specified |
+| S3 | Screenshot redaction | an image must not carry a secret out of the process | done |
+| S4 | Credential autofill | log in without a model ever seeing a secret | done, review pending |
 | S5 | Telemetry | per-decision timings and outcomes, redacted | to do |
 | S6 | Agent tool surface | mount the library in any agent framework | to do |
 | S7 | Session state | carry element references across processes | to do |
@@ -62,3 +62,11 @@ decision, not the browser layer, is what makes a task fast.
   it, then truncates. `tools/implement.mjs` replaced them. A cheap model must
   answer with whole files in a strict form, and the harness writes them, runs the
   verification, and feeds a failure back. One round costs about $0.06.
+
+- S4 needed the mechanism, not the goal. The specification asked for
+  classification by the `autocomplete` attribute and the input type, but
+  `ObservedAction` carries neither. The fields are read from the live node
+  through the in-page registry instead, which keeps the change inside one file.
+- The implementer models differ in kind. `meta/muse-spark-1.3` returns empty
+  content and invents files; `gpt-5.6-luna-fast` answers correctly and costs
+  about one tenth as much. luna is the default.
