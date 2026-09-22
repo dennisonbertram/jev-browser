@@ -491,3 +491,25 @@ describe("15. a scrolling panel", () => {
     }
   });
 });
+
+describe("a collapsed panel", () => {
+  it("keeps its fields out of the action table, but not a file input", async () => {
+    const { context, page } = await pageWith(`
+      <input aria-label="Where from?">
+      <div style="height:0;overflow:clip">
+        <input aria-label="Where else?">
+        <button>Add airport</button>
+      </div>
+      <div style="visibility:hidden"><button>Ghost</button></div>
+      <label>Photo <input type="file" style="width:0;height:0"></label>
+    `);
+    const labels = (await observe(context)).actions.map((a) => a.label);
+    await context.close();
+
+    expect(labels).toContain("Where from?");
+    expect(labels).toContain("Photo");
+    expect(labels).not.toContain("Where else?");
+    expect(labels).not.toContain("Add airport");
+    expect(labels).not.toContain("Ghost");
+  });
+});

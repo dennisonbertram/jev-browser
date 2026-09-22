@@ -76,6 +76,7 @@ const TARGET_RULES = [
   "Choose the best offered target for the operation named in this question; another question already chose the operation.",
   "Use the goal, field values, nearby text, and recent actions.",
   "Do not choose a field that already holds the requested value.",
+  "After text is typed into a combobox, choose the option that matches it to commit the value, in preference to any other control.",
   "Choose only an offered element index.",
 ];
 
@@ -129,7 +130,11 @@ function targetCriteria(
     {};
   for (const [index, action] of Object.entries(targets)) {
     criteria[index] = {
-      element: `[${index}] ${action.label}`,
+      // The role is part of the description, not decoration. Without it a
+      // suggestion in an open list and an ordinary button beside it read the
+      // same, and the classifier picked the button: on Google Flights it
+      // opened the multi-airport panel instead of accepting "Zurich".
+      element: `[${index}] ${action.role} "${action.label}"`,
       current_value: action.currentValue ?? action.value ?? "",
     };
   }

@@ -440,17 +440,52 @@ export async function fresh(
   }
 }
 
-async function twoAnimationFrames(frame: Frame): Promise<void> {
+/**
+ * Waits until the document stops changing, then returns.
+ *
+ * Two animation frames used to be the whole wait after a click. That is about
+ * 32 ms, and a page that rebuilds a section takes longer: on Google Flights
+ * the next observation of the trip-type change saw no fields at all, and the
+ * run chose from what little was left.
+ *
+ * The wait is for two consecutive frames with no mutation, so a page that is
+ * already still costs the same 32 ms as before. `capMs` bounds a page that
+ * never stops, such as one with a spinner or a clock.
+ */
+async function domQuiet(frame: Frame, capMs = 600): Promise<void> {
   await Promise.race([
     frame
       .evaluate(
-        () =>
+        (cap) =>
           new Promise<void>((resolve) => {
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-          })
+            let dirty = 0;
+            const observer = new MutationObserver(() => {
+              dirty += 1;
+            });
+            observer.observe(document, {
+              subtree: true,
+              childList: true,
+              attributes: true,
+              characterData: true,
+            });
+            const deadline = performance.now() + cap;
+            let quiet = 0;
+            const done = () => {
+              observer.disconnect();
+              resolve();
+            };
+            const tick = () => {
+              quiet = dirty === 0 ? quiet + 1 : 0;
+              dirty = 0;
+              if (quiet >= 2 || performance.now() > deadline) done();
+              else requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+          }),
+        capMs
       )
       .catch(() => {}),
-    new Promise((resolve) => setTimeout(resolve, 50)),
+    new Promise((resolve) => setTimeout(resolve, capMs + 100)),
   ]);
 }
 
@@ -548,7 +583,7 @@ export async function settle(
       const waited = await pollComboboxOptions(frame, action.ref.node);
       if (waited !== null) return;
     }
-    await twoAnimationFrames(frame);
+    await domQuiet(frame);
   } catch {
     // never throw out of settle()
   }

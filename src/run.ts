@@ -44,6 +44,8 @@ export type HistoryEntry = {
 
 export type RunResult = {
   status: "done" | "blocked";
+  /** Why the loop stopped. A caller needs to tell a refusal from a cap. */
+  reason: string;
   goal: string;
   history: HistoryEntry[];
   decisions: (Decision & { elapsedMs: number })[];
@@ -87,6 +89,7 @@ export async function run(
   const decisions: (Decision & { elapsedMs: number })[] = [];
   let observation = await observe(context, { screenshot: options.screenshots });
   let status: "ready" | "done" | "blocked" = "ready";
+  let reason = "the loop ended without a stated reason";
   // Keyed by the entire text-helper input, so a generated value survives a
   // stale-page retry only when nothing that produced it changed.
   const pendingText = new Map<string, { value: string; latencyMs: number }>();
@@ -107,6 +110,7 @@ export async function run(
   while (status === "ready") {
     if (decisions.length >= MAX_DECISIONS) {
       status = "blocked";
+      reason = `reached the limit of ${MAX_DECISIONS} decisions`;
       break;
     }
     if (!(await fresh(context, observation))) {
@@ -121,12 +125,14 @@ export async function run(
     if (decision.operation === "DONE" || decision.operation === "BLOCKED") {
       // A terminal choice is only accepted against the page it was made on.
       if (!(await fresh(context, observation))) {
-        observation = await observe(context, {
-          screenshot: options.screenshots,
-        });
+        observation = await observe(context, { screenshot: options.screenshots });
         continue;
       }
       status = decision.operation === "DONE" ? "done" : "blocked";
+      reason =
+        decision.operation === "DONE"
+          ? "the classifier judged the goal met"
+          : "the classifier judged the goal unreachable from this page";
       break;
     }
 
@@ -139,6 +145,7 @@ export async function run(
       );
     if (history.length >= MAX_ACTIONS) {
       status = "blocked";
+      reason = `reached the limit of ${MAX_ACTIONS} actions`;
       break;
     }
 
@@ -176,6 +183,7 @@ export async function run(
             emptyText += 1;
             if (emptyText > MAX_EMPTY_TEXT) {
               status = "blocked";
+              reason = "the text model gave no value for the chosen field";
               break;
             }
             // Record the attempt. recent_actions is how the classifier learns
@@ -219,6 +227,7 @@ export async function run(
       staleRetries += 1;
       if (staleRetries > MAX_STALE_RETRIES) {
         status = "blocked";
+        reason = "the page kept changing under every attempted action";
         break;
       }
       observation = await observe(context, { screenshot: options.screenshots });
@@ -263,6 +272,7 @@ export async function run(
 
   return {
     status: status === "done" ? "done" : "blocked",
+    reason,
     goal,
     history,
     decisions,

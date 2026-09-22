@@ -840,7 +840,24 @@
     return null;
   }
 
+  // An element a person cannot see is not a target. walkNode prunes
+  // display:none and aria-hidden, but a container can also collapse its
+  // contents to nothing with a zero height and overflow:clip. Those elements
+  // used to enter the numbered table: on Google Flights the whole
+  // multi-airport panel did, and a run typed into its hidden "Where else?"
+  // field instead of the visible origin field.
+  //
+  // A file input is exempt. Sites routinely give it zero size and drive it
+  // from a styled label, and it is still the only way to attach a file.
+  function isCollapsed(el, kind) {
+    if (kind === "upload") return false;
+    var rect = frameRect(el);
+    if (!rect || rect.width <= 0 || rect.height <= 0) return true;
+    return isVisibilityHidden(el);
+  }
+
   function addAction(el, ctx, kind, extra) {
+    if (isCollapsed(el, kind)) return;
     var name = accessibleName(el);
     if (
       !name &&
@@ -1031,40 +1048,60 @@
     return joined.length > MAX_TEXT ? joined.slice(0, MAX_TEXT) : joined;
   }
 
-  // ---- filter out actions inside a scrolled-out-of-view scroller ---------
+  // ---- filter out actions their own container clips away ---------------
 
-  function filterHiddenInScrollers(ctx) {
-    if (ctx.scrollers.length === 0) return;
-    var scrollerEls = [];
-    for (var i = 0; i < ctx.scrollers.length; i++) {
-      var s = ctx.scrollers[i];
-      if (s.node !== undefined) {
-        var el = nodes.get(s.node);
-        if (el) scrollerEls.push(el);
+  // A container that clips (overflow other than visible) shows only the part
+  // of its contents that falls inside its own box. Anything outside is not on
+  // screen for the person, whatever its own rect says.
+  //
+  // This covers two cases with one rule. A scroll container shows the scrolled
+  // portion only. A collapsed panel with a zero height and overflow:clip shows
+  // nothing at all: Google Flights hides its multi-airport panel that way, and
+  // its fields used to enter the numbered table and capture the run.
+  function clipsContents(cs) {
+    if (!cs) return false;
+    return (
+      (cs.overflowX !== "visible" && cs.overflowX !== "") ||
+      (cs.overflowY !== "visible" && cs.overflowY !== "")
+    );
+  }
+
+  function intersects(a, b) {
+    return (
+      a.x + a.width > b.x &&
+      a.x < b.x + b.width &&
+      a.y + a.height > b.y &&
+      a.y < b.y + b.height
+    );
+  }
+
+  function isClippedAway(el) {
+    var rect = frameRect(el);
+    if (!rect) return true;
+    var doc = el.ownerDocument;
+    var node = el.parentElement;
+    var hops = 0;
+    while (node && node !== doc.documentElement && hops < 40) {
+      if (clipsContents(getComputedStyleSafe(node))) {
+        var box = frameRect(node);
+        // A clipping ancestor with no box of its own shows nothing.
+        if (!box || !intersects(rect, box)) return true;
       }
+      node = node.parentElement;
+      hops++;
     }
-    if (scrollerEls.length === 0) return;
+    return false;
+  }
+
+  function filterClipped(ctx) {
     ctx.actions = ctx.actions.filter(function (action) {
       if (!action.ref) return true;
       var el = nodes.get(action.ref.node);
       if (!el) return true;
-      for (var j = 0; j < scrollerEls.length; j++) {
-        var scroller = scrollerEls[j];
-        if (scroller !== el && scroller.contains(el)) {
-          // inside a scroller: only keep it if currently within that
-          // scroller's visible (scrolled) viewport
-          var scRect = frameRect(scroller);
-          var elRect = frameRect(el);
-          if (!scRect || !elRect) return false;
-          var visible =
-            elRect.y + elRect.height > scRect.y &&
-            elRect.y < scRect.y + scRect.height &&
-            elRect.x + elRect.width > scRect.x &&
-            elRect.x < scRect.x + scRect.width;
-          if (!visible) return false;
-        }
-      }
-      return true;
+      // A file input is exempt: sites routinely collapse it and drive it from
+      // a styled label, and it is still the only way to attach a file.
+      if (action.kind === "upload") return true;
+      return !isClippedAway(el);
     });
   }
 
@@ -1098,7 +1135,7 @@
         });
       }
 
-      filterHiddenInScrollers(ctx);
+      filterClipped(ctx);
       addPressActions(doc, ctx);
 
       // Derived from the observed controls, so it covers shadow roots and

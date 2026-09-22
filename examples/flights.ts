@@ -58,7 +58,7 @@ for (let rep = 1; rep <= REPS; rep += 1) {
 
   const latencies = result.decisions.map((d) => d.latencyMs);
   console.log(
-    `  status ${result.status}  total ${result.elapsedMs}ms  ` +
+    `  status ${result.status} (${result.reason})  total ${result.elapsedMs}ms  ` +
       `${result.decisions.length} decisions (median ${median(latencies)}ms)  ` +
       `${result.history.length} actions  ${result.usage.text_calls} text calls  ` +
       `${result.usage.input_tokens} in / ${result.usage.output_tokens} out`
