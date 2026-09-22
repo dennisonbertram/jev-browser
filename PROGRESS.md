@@ -33,10 +33,10 @@ decision, not the browser layer, is what makes a task fast.
 
 | # | Subsystem | Why it is needed | State |
 | --- | --- | --- | --- |
-| S0 | Extraction, public API, CI | usable outside one repo | in progress |
-| S1 | Browser lifecycle | launch locally, attach to a remote CDP browser, dispose cleanly | to do |
-| S2 | Vision and coordinates | a control drawn on a canvas has no DOM node | to do |
-| S3 | Screenshot redaction | an image must not carry a secret out of the process | to do |
+| S0 | Extraction, public API, CI | usable outside one repo | done |
+| S1 | Browser lifecycle | launch locally, attach to a remote CDP browser, dispose cleanly | done, reviewed, fixed |
+| S2 | Vision and coordinates | a control drawn on a canvas has no DOM node | done, review pending |
+| S3 | Screenshot redaction | an image must not carry a secret out of the process | in progress |
 | S4 | Credential autofill | log in without a model ever seeing a secret | to do |
 | S5 | Telemetry | per-decision timings and outcomes, redacted | to do |
 | S6 | Agent tool surface | mount the library in any agent framework | to do |
@@ -50,3 +50,15 @@ decision, not the browser layer, is what makes a task fast.
   Playwright; no application code came with it.
 - The text helper now speaks to any OpenAI-compatible endpoint, set by
   `TEXT_MODEL_BASE_URL`. It was wired to one vendor's gateway.
+
+- S1 passed a review that found nine defects, four of them serious: the
+  attachment escaped its own timeout, a launch failure leaked the browser, the
+  readiness poll could not be cancelled, `cdpUrl` could name another browser,
+  and `close` reported success before it finished. The tests also passed against
+  a `close` that did nothing. All are fixed, in three parts, each with a test
+  that fails when the behaviour breaks.
+- Two agentic command-line implementers proved unreliable: one fails to
+  authenticate, and the other prints the code it would write instead of writing
+  it, then truncates. `tools/implement.mjs` replaced them. A cheap model must
+  answer with whole files in a strict form, and the harness writes them, runs the
+  verification, and feeds a failure back. One round costs about $0.06.

@@ -5,6 +5,7 @@
  * an attached session must never close a browser this process did not start.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 import { attachOverCdp, launchLocal } from "../src/browser.ts";
 import type { BrowserSession } from "../src/browser.ts";
 import { start, stop } from "./fixtures/serve.ts";
@@ -52,6 +53,8 @@ describe("launchLocal", () => {
     }
     // Rule 4: a second close does nothing and throws nothing.
     await session.close();
+    // A close that does nothing would leave the browser connected.
+    expect(session.browser.isConnected()).toBe(false);
   });
 
   it("with cdpPort sets cdpUrl, and GET /json/version on that port answers", async () => {
@@ -103,23 +106,41 @@ describe("attachOverCdp", () => {
   it("on the same endpoint gives a working page, and closing it leaves the owner's browser alive", async () => {
     expect(cdpSession, "the cdpPort test must have run first").toBeTruthy();
 
-    const attached = await attachOverCdp(cdpSession!.cdpUrl!);
-    try {
-      expect(attached.owned).toBe(false);
-      await attached.page.goto(`http://localhost:${PRIMARY}/select.html`, {
-        waitUntil: "load",
-      });
-      await expect.poll(() => attached.page.title()).toBe("select");
-    } finally {
-      await attached.close();
-    }
-
-    // Rule 3: the attached close disconnected only. The first session's page
-    // still loads a page, so the browser it started was never closed.
-    await cdpSession!.page.goto(`http://localhost:${PRIMARY}/canvas.html`, {
+    // Prove the attachment reached the owner's browser: a unique url opened
+    // in the owner must show up in the attached context's pages.
+    const token = randomUUID();
+    const probe = await cdpSession!.context.newPage();
+    await probe.goto(`http://localhost:${PRIMARY}/select.html#${token}`, {
       waitUntil: "load",
     });
-    await expect.poll(() => cdpSession!.page.title()).toBe("canvas");
+    try {
+      const attached = await attachOverCdp(cdpSession!.cdpUrl!);
+      try {
+        expect(attached.owned).toBe(false);
+        const urls = attached.context.pages().map((p) => p.url());
+        expect(urls.some((u) => u.includes(token))).toBe(true);
+        await attached.page.goto(`http://localhost:${PRIMARY}/select.html`, {
+          waitUntil: "load",
+        });
+        await expect.poll(() => attached.page.title()).toBe("select");
+      } finally {
+        await attached.close();
+      }
+
+      // A close that does nothing would leave the attached connection open.
+      expect(attached.browser.isConnected()).toBe(false);
+      // Rule 3: the attached close disconnected only.
+      expect(cdpSession!.browser.isConnected()).toBe(true);
+
+      // The first session's page still loads a page, so the browser it
+      // started was never closed.
+      await cdpSession!.page.goto(`http://localhost:${PRIMARY}/canvas.html`, {
+        waitUntil: "load",
+      });
+      await expect.poll(() => cdpSession!.page.title()).toBe("canvas");
+    } finally {
+      await probe.close().catch(() => {});
+    }
   });
 
   it("rejects in under 20 seconds on a dead endpoint, naming the endpoint", async () => {

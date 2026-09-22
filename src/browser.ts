@@ -205,17 +205,59 @@ async function verifyCdpOwnership(
   }
 }
 
-/** Idempotent close: the second call does nothing and throws nothing. */
-function releaser(browser: Browser): () => Promise<void> {
-  let closed = false;
-  return async () => {
-    if (closed) return;
-    closed = true;
-    // Playwright closes a browser this process launched, but only disconnects
-    // from one it attached to over CDP. Rule 3 falls out of that: an attached
-    // session never closes a browser another system owns.
-    await browser.close();
+/**
+ * Holds a single close promise so concurrent callers await the same shutdown.
+ * On success the resolved promise is kept, so later calls do nothing. On
+ * rejection the slot is cleared, so a retry can run the shutdown again.
+ */
+function idempotentCloser(run: () => Promise<void>): () => Promise<void> {
+  let pending: Promise<void> | null = null;
+  return () => {
+    if (pending) return pending;
+    pending = (async () => {
+      try {
+        await run();
+      } catch (error) {
+        pending = null;
+        throw error;
+      }
+    })();
+    return pending;
   };
+}
+
+/** Idempotent close for an owned browser: closes the browser this process started. */
+function releaser(browser: Browser): () => Promise<void> {
+  return idempotentCloser(() => browser.close());
+}
+
+/**
+ * Idempotent close for an attached session: closes only the page and context
+ * this process created, then disconnects. A borrowed page or context is left
+ * alone, and the remote browser is never closed.
+ */
+function attachedReleaser(
+  browser: Browser,
+  context: BrowserContext,
+  page: Page,
+  createdContext: boolean,
+  createdPage: boolean
+): () => Promise<void> {
+  return idempotentCloser(async () => {
+    try {
+      if (createdContext) {
+        // Closing the created context also closes the created page inside it.
+        await context.close();
+      } else if (createdPage) {
+        if (!page.isClosed()) await page.close();
+      }
+    } finally {
+      // For a CDP-attached browser this disconnects only; the remote
+      // browser stays alive. It must run even when cleanup above throws,
+      // so a failed page close cannot leave the connection behind.
+      await browser.close();
+    }
+  });
 }
 
 export async function launchLocal(
@@ -297,32 +339,62 @@ export async function attachOverCdp(
         await connected.close().catch(() => {});
         throw new Error(`timed out after ${timeoutMs}ms`);
       }
-      const context =
-        connected.contexts()[0] ??
-        (await connected.newContext({ viewport: options.viewport }));
+      let context: BrowserContext;
+      let createdContext = false;
+      const existingContext = connected.contexts()[0];
+      if (existingContext) {
+        context = existingContext;
+      } else {
+        context = await connected.newContext({
+          viewport: options.viewport,
+        });
+        createdContext = true;
+      }
       if (timedOut) {
+        if (createdContext) await context.close().catch(() => {});
         await connected.close().catch(() => {});
         throw new Error(`timed out after ${timeoutMs}ms`);
       }
-      const page = context.pages()[0] ?? (await context.newPage());
+      let page: Page;
+      let createdPage = false;
+      try {
+        const existingPage = context.pages()[0];
+        if (existingPage) {
+          page = existingPage;
+        } else {
+          page = await context.newPage();
+          createdPage = true;
+        }
+      } catch (error) {
+        if (createdContext) await context.close().catch(() => {});
+        throw error;
+      }
       if (timedOut) {
+        if (createdPage && !page.isClosed()) {
+          await page.close().catch(() => {});
+        }
+        if (createdContext) await context.close().catch(() => {});
         await connected.close().catch(() => {});
         throw new Error(`timed out after ${timeoutMs}ms`);
       }
-      return { connected, context, page };
+      return { connected, context, page, createdContext, createdPage };
     })();
 
-    const { connected, context, page } = await Promise.race([
-      work,
-      timeoutPromise,
-    ]);
+    const { connected, context, page, createdContext, createdPage } =
+      await Promise.race([work, timeoutPromise]);
     return {
       browser: connected,
       context,
       page,
       cdpUrl,
       owned: false,
-      close: releaser(connected),
+      close: attachedReleaser(
+        connected,
+        context,
+        page,
+        createdContext,
+        createdPage
+      ),
     };
   } catch (error) {
     if (browser) await browser.close().catch(() => {});
