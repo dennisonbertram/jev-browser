@@ -130,9 +130,6 @@ browsers, session state across processes, and telemetry.
 
 ## Try it in five minutes
 
-This package is not on a public registry. Install it from a checkout, or from a
-tarball you build with `npm pack`:
-
 ```sh
 git clone https://github.com/dennisonbertram/jev-browser.git
 cd jev-browser
@@ -141,8 +138,8 @@ pnpm exec playwright install chromium
 cp .env.example .env
 ```
 
-To use it from another project, point the dependency at the tarball or the
-checkout:
+The package is not published to npm. To use it from another project, depend on
+your checkout or on a tarball you build with `npm pack`:
 
 ```jsonc
 // package.json
@@ -153,9 +150,26 @@ Node 22 or newer. Chromium only: the library drives Chromium through
 Playwright, locally or over the Chrome DevTools Protocol. Firefox and WebKit
 are not supported. Pass `launchLocal({ headless: false })` to watch it work.
 
-Set `TYPESAFE_API_KEY` in `.env`. Set `TEXT_MODEL_API_KEY` too if your task
-types text; any OpenAI-compatible endpoint works, named by
-`TEXT_MODEL_BASE_URL`. Then run one task:
+Two keys go in `.env`, and neither belongs in your repository.
+
+`TYPESAFE_API_KEY` is the classifier, from <https://docs.typesafe.ai>. Every
+task needs it.
+
+`TEXT_MODEL_API_KEY` is a second, small model that writes the value for a
+field. Only a task that types needs it. Any endpoint that speaks the OpenAI
+chat-completions protocol works, so pick whichever you already pay for:
+
+| Provider | `TEXT_MODEL_BASE_URL` | A model that fits |
+| --- | --- | --- |
+| OpenAI | `https://api.openai.com/v1` | `gpt-4.1-nano` |
+| Cerebras | `https://api.cerebras.ai/v1` | `qwen-3.8-27b` |
+| Your own gateway | `https://your-gateway/v1` | whatever it serves |
+
+The job is small: turn a goal and a field label into one short string. A fast
+cheap model is the right choice, and the library rejects a reply that is not a
+single JSON object holding one key.
+
+Then run one task:
 
 ```ts
 import { chromium } from "playwright";
