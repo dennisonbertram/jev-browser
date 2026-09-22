@@ -290,7 +290,7 @@ floor at about 5.4 s with nothing wasted, so the target is not out of reach
 in principle. The distance from 5.4 s to 8.87 s is decisions thrown away
 because the page changed while the model was answering.
 
-Eight separate attempts to recover them all measured **slower**, and are
+Nine separate attempts to recover them all measured **slower**, and are
 recorded here so they are not tried again:
 
 | attempt | result |
@@ -303,6 +303,7 @@ recorded here so they are not tried again:
 | Require a longer quiet window so fewer decisions go stale | 10.2 s, 4/5 |
 | Abandon a classifier call once the page has moved, watching every frame | 11.9 s, 15 decisions |
 | The same, watching one marker on one frame | 12.3 s, 14 decisions |
+| Remember answers within a run, keyed by the exact request | 9.7 s, decisions rose |
 
 The last three are the interesting failures, because they all worked as
 intended and still lost. A longer quiet window cut decisions from 22 to 18.
@@ -313,7 +314,15 @@ the time before it is abandoned and is then paid for again in full.
 
 Payload size is not a lever either. Classifier latency is flat between 1,249
 and 3,616 input tokens, at 161 ms to 210 ms, so trimming the table would not
-make a call faster. The first three relax what counts as a stale page, and each let the agent act
+make a call faster.
+
+Nor is repetition. The classifier is effectively a function of its request:
+asked the same thing six times it gave the same operation and target every
+time, varying only confidence between 0.960 and 0.980. But a run repeats an
+identical request only about three times, so remembering answers saves about
+0.7 s in theory, and measured slower in practice. An earlier count of 47
+repeats was an artefact of running several journeys in one process, where
+they share their opening states. The first three relax what counts as a stale page, and each let the agent act
 on a page that had moved on, which cost more actions than it saved calls. The
 fourth cannot work in principle: the snapshot it asks from is taken during
 the settle, so it predates the very change being waited for. The freshness
