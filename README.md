@@ -290,7 +290,7 @@ floor at about 5.4 s with nothing wasted, so the target is not out of reach
 in principle. The distance from 5.4 s to 8.87 s is decisions thrown away
 because the page changed while the model was answering.
 
-Five separate attempts to recover them all measured **slower**, and are
+Eight separate attempts to recover them all measured **slower**, and are
 recorded here so they are not tried again:
 
 | attempt | result |
@@ -301,10 +301,19 @@ recorded here so they are not tried again:
 | Ask the classifier during the settle wait, keep the answer if the settled page matches | 10.0 s, 45% of answers usable |
 | Focus the chosen node directly when the click did not | 9.7 s, much wider spread |
 | Require a longer quiet window so fewer decisions go stale | 10.2 s, 4/5 |
+| Abandon a classifier call once the page has moved, watching every frame | 11.9 s, 15 decisions |
+| The same, watching one marker on one frame | 12.3 s, 14 decisions |
 
-The last of these is the interesting failure: it worked as intended, cutting
-decisions from 22 to 18, and still lost, because the extra settling cost more
-than the calls it saved. The first three relax what counts as a stale page, and each let the agent act
+The last three are the interesting failures, because they all worked as
+intended and still lost. A longer quiet window cut decisions from 22 to 18.
+Abandoning a call the moment the page moved cut them to 14, the fewest of
+anything tried. In each case the cost of getting there exceeded the calls
+saved: settling longer costs every action, and an abandoned call still burns
+the time before it is abandoned and is then paid for again in full.
+
+Payload size is not a lever either. Classifier latency is flat between 1,249
+and 3,616 input tokens, at 161 ms to 210 ms, so trimming the table would not
+make a call faster. The first three relax what counts as a stale page, and each let the agent act
 on a page that had moved on, which cost more actions than it saved calls. The
 fourth cannot work in principle: the snapshot it asks from is taken during
 the settle, so it predates the very change being waited for. The freshness
