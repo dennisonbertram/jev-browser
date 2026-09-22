@@ -1,42 +1,45 @@
 # jev-browser
 
-A browser agent that picks its next action from a numbered table of the page's
-controls. It does not write the action. A classifier chooses one operation and
-one element; a small language model runs only to write field text.
+jev-browser is a TypeScript library that lets a program operate a web browser:
+it reads a page into a numbered table of its controls, decides which control to
+use, and acts on it with real mouse and keyboard input.
 
-## Side by side on yahoo.com
+The decision is made by a classifier, not a general-purpose LLM. The
+classifier is [TypeSafe's Jev](https://docs.typesafe.ai), a hosted service that
+answers a multiple-choice question in roughly 170 to 270 ms. The classifier
+chooses one operation and one element. A small language model runs only to
+write the text that goes into a field. This is why it is fast: in a head-to-head
+run on the live yahoo.com, this library finished a task in **2.13 s** with 2
+decisions, while an LLM tool-calling agent with the same goal and the same
+browser took **8.20 s** and 4 decisions
+([film](docs/jev-vs-production-worker.mp4)).
 
-![jev-browser against a production worker on yahoo.com](docs/jev-vs-production-worker.gif)
+If you are building an agent that needs to click, type, scroll, and log in on
+real web pages, and you care about speed, token cost, or keeping secrets out of
+prompts, this library is the browser layer. If you need an agent that reasons
+freely about novel tasks, writes its own actions, or works outside a browser,
+this is not it.
 
-Two agents, the same goal, the same browser, run one after the other on the
-live site. This library finished in **2.13 s** with 2 decisions. An LLM
-tool-calling agent finished in **8.20 s** with 4 decisions. Each clip starts
-when its agent starts, after the page has loaded, so the timer measures the
-task. Full film:
-[docs/jev-vs-production-worker.mp4](docs/jev-vs-production-worker.mp4).
+## See it
 
-## Performance
+![jev-browser beside an LLM tool-calling agent on yahoo.com](docs/jev-vs-production-worker.gif)
 
-Measured on an Apple M4 Max, macOS 15.7, Node 24, Playwright 1.63, headless
-Chromium. Each figure says how many runs it comes from. Reproduce them with
-`pnpm run test` for correctness and the scripts in `examples/` for timing.
+Both agents were given "Open the Finance section." on the live site, in the
+same browser, one after the other. Each clip starts when its agent starts, so
+the timer measures the task and not the page load.
+[Full film](docs/jev-vs-production-worker.mp4).
 
-- **4 to 6 ms** to read a whole page, every frame, into a numbered table.
-  Median of 12 runs for each page: 5 ms for a form, 4 ms through nested shadow
-  DOM, 6 ms across a cross-origin iframe, 6 ms for a 10-control page.
-- **266 ms** median for one decision from the live classifier, over 8 calls.
-  Across 34 decisions in an earlier run: 170 ms warm, 379 ms for the first call
-  of a run.
-- **29 ms** median to act: re-resolve the element, re-validate it, dispatch real
-  mouse and keyboard input.
-- **1,289 ms** median for a whole task, over 27 runs across 9 journeys.
-- **281 ms** to attach to a remote browser, **133 ms** to read a page on it.
+## Why use it instead of an LLM tool-calling loop
 
-### Against an LLM tool-calling agent
+A typical browser agent sends the page to an LLM at every step and lets the LLM
+pick the next tool call. That works, but each decision costs a full model
+round-trip and a large prompt. jev-browser replaces that per-step LLM decision
+with a classifier that reads a compact numbered table of the page's controls.
 
-Nine journeys, three repetitions for each, all three agents in the same browser
-with the same goals and the same success test. A journey counts as done only
-when the page reaches its end state, which the harness checks, not the agent.
+Measured comparison: nine journeys, three repetitions each, all three agents in
+the same browser with the same goals and the same success test. A journey
+counts as done only when the page reaches its end state, which the harness
+checks, not the agent.
 
 | Agent | Tasks done | Median task | Tokens |
 | --- | --- | ---: | ---: |
@@ -46,51 +49,113 @@ when the page reaches its end state, which the harness checks, not the agent.
 
 The third row is the control. It runs this library's engine and changes only
 who picks the action. 1,289 ms against 37,110 ms is therefore the cost of the
-decision, and not of the browser layer.
+decision, and not of the browser layer. The trade: the LLM-decides row finished
+27/27 tasks against the classifier's 25/27, so you give up some success rate
+for roughly 29x the speed, and 8x fewer tokens than the tool-calling loop.
 
-## What it does
+Two more reasons, independent of speed:
 
-The library reads the whole page, not one document:
+- **Secrets stay out of prompts.** Password and one-time-code fields report a
+  character count, never a value. Screenshots cover those fields during
+  capture. A credential value never enters a prompt, a return value, a log, or
+  an error.
+- **The agent cannot invent an action.** A model returns an index into a table
+  the library observed. It never returns a selector, a coordinate, a file
+  path, a key name, or code. The library re-resolves and re-checks the element
+  immediately before sending input; a stale decision is refused.
 
-- open shadow DOM, at any depth, and slotted content
-- same-origin iframes and cross-origin iframes
-- nested scroll containers, and not only the window
-- native `select` elements, one action for each enabled option
-- widgets that answer only to keys
-- file inputs, from a directory the caller names
-- pop-up tabs
-- canvas regions, reported so a picture can read them
+## Who it is for
 
-It counts closed shadow roots through the Chrome DevTools Protocol, because page
-script cannot see inside one. It reports the count and does not guess.
+- You are building an agent that must operate real web pages: forms, logins,
+  file uploads, multi-tab flows, pages with shadow DOM or iframes.
+- You already have an agent or model host and need a safe, fast browser tool
+  layer for it.
+- You care about keeping credentials and secrets out of model context.
 
-## The seven tools an agent calls
+It is not for you if:
 
-| Tool | What it does |
-| --- | --- |
-| `browser_observe` | Return the numbered table of controls. |
-| `browser_act` | Click the control at an index, or choose a select option. |
-| `browser_type` | Type text into the field at an index. |
-| `browser_login` | Fill the credential fields from your source. |
-| `browser_screenshot` | Return PNG bytes with the secret fields covered. |
-| `browser_scroll` | Scroll one region, up or down. |
-| `browser_switch_tab` | Make another open tab active. |
+- Your task needs open-ended reasoning at every step. The classifier decides
+  from a fixed table; it declines some tasks it could finish (see Limits).
+- You need to drive anything other than a Chromium browser.
+- You cannot make network calls to the classifier and text-model endpoints.
+
+## When to reach for it
+
+Reach for it when a task is a known kind of web journey — fill this form, log
+in, find and click this link, upload a file — and you want it done in about a
+second with few tokens. Do not reach for it when the task is ambiguous, the
+journey type is new each time, or the cost of a wrong action is high and you
+need an LLM's judgment on every step. A `DONE` decision from the classifier is
+an opinion; confirm the result from the page.
+
+## Use it with an agent you already have
+
+Give your model the seven tool definitions and route its calls through the
+host:
+
+```ts
+import { createToolHost } from "jev-browser";
+
+const host = createToolHost({
+  // A Playwright BrowserContext you own.
+  context,
+  // Optional. Without it, browser_login refuses. You hold the secrets; the
+  // library asks for one by kind and by the origin of the frame that needs it.
+  credentials: {
+    get: async (kind, origin) => vault.read(kind, origin), // "username" | "password" | "otp"
+  },
+  // Optional. Without it, a file upload refuses. The library picks a file from
+  // this directory; it never accepts a path from a model.
+  uploadDir: "/var/app/uploads",
+});
+
+const tools = host.definitions();      // give these to your model
+const out = await host.call("browser_observe", {});
+```
 
 An index into the last observation is the only way to name an element. No tool
 takes a selector, an XPath, a coordinate, or code.
 
-## Install
+To drive a browser you already run instead of launching one:
+
+```ts
+import { attachOverCdp } from "jev-browser";
+
+const session = await attachOverCdp(remote.cdp_ws_url);
+// session.close() disconnects. It never closes a browser you own.
+```
+
+[docs/integration.md](docs/integration.md) covers all three patterns, remote
+browsers, session state across processes, and telemetry.
+
+## Try it in five minutes
+
+This package is not on a public registry. Install it from a checkout, or from a
+tarball you build with `npm pack`:
 
 ```sh
+git clone https://github.com/dennisonbertram/jev-browser.git
+cd jev-browser
 pnpm install
 pnpm exec playwright install chromium
 cp .env.example .env
 ```
 
-Set `TYPESAFE_API_KEY`. Set `TEXT_MODEL_API_KEY` for tasks that type text; any
-OpenAI-compatible endpoint works, named by `TEXT_MODEL_BASE_URL`.
+To use it from another project, point the dependency at the tarball or the
+checkout:
 
-## Run one task
+```jsonc
+// package.json
+"dependencies": { "jev-browser": "file:../jev-browser" }
+```
+
+Node 22 or newer. Chromium only: the library drives Chromium through
+Playwright, locally or over the Chrome DevTools Protocol. Firefox and WebKit
+are not supported. Pass `launchLocal({ headless: false })` to watch it work.
+
+Set `TYPESAFE_API_KEY` in `.env`. Set `TEXT_MODEL_API_KEY` too if your task
+types text; any OpenAI-compatible endpoint works, named by
+`TEXT_MODEL_BASE_URL`. Then run one task:
 
 ```ts
 import { chromium } from "playwright";
@@ -104,27 +169,43 @@ console.log(result.status, result.elapsedMs);
 await browser.close();
 ```
 
-## Mount the tools in your agent
+## What it costs you
 
-```ts
-import { createToolHost } from "jev-browser";
+- **Two network services.** The classifier (`TYPESAFE_API_KEY`) makes a call
+  per decision. Tasks that type text need a second model
+  (`TEXT_MODEL_API_KEY`, any OpenAI-compatible endpoint). Both can fail.
+- **Chromium.** Installed via `pnpm exec playwright install chromium`. The
+  library drives it through Playwright.
+- **Tokens.** 182k tokens across 27 runs in the benchmark above, versus 1.48M
+  for the LLM tool-calling worker — but not zero.
 
-const host = createToolHost({ context, credentials, uploadDir });
-const tools = host.definitions();      // give these to your model
-const out = await host.call("browser_observe", {});
-```
+## What the agent can see and do
 
-## Attach to a browser you already run
+The library reads the whole page, not one document:
 
-```ts
-import { attachOverCdp } from "jev-browser";
+- open shadow DOM, at any depth, and slotted content
+- same-origin iframes and cross-origin iframes
+- nested scroll containers, and not only the window
+- native `select` elements, one action for each enabled option
+- widgets that answer only to keys
+- file inputs, from a directory the caller names
+- pop-up tabs
+- canvas regions, reported so a picture can read them
 
-const session = await attachOverCdp(remote.cdp_ws_url);
-// session.close() disconnects. It never closes a browser you own.
-```
+It counts closed shadow roots through the Chrome DevTools Protocol, because
+page script cannot see inside one. It reports the count and does not guess.
 
-[docs/integration.md](docs/integration.md) covers all three patterns, remote
-browsers, session state across processes, and telemetry.
+The seven tools an agent calls:
+
+| Tool | What it does |
+| --- | --- |
+| `browser_observe` | Return the numbered table of controls. |
+| `browser_act` | Click the control at an index, or choose a select option. |
+| `browser_type` | Type text into the field at an index. |
+| `browser_login` | Fill the credential fields from your source. |
+| `browser_screenshot` | Return PNG bytes with the secret fields covered. |
+| `browser_scroll` | Scroll one region, up or down. |
+| `browser_switch_tab` | Make another open tab active. |
 
 ## What the library guarantees
 
@@ -135,18 +216,51 @@ browsers, session state across processes, and telemetry.
 3. A field that holds a secret never gives up its value. A password, a one-time
    code and a new password report a character count. The value cannot reach the
    table a model reads, the classifier request, or the run history.
-4. `browser_screenshot` covers those fields during capture, so a picture holding
-   a secret never exists. `screenshotPage` and `screenshotCanvas` do not redact;
-   use them on a page you know to be safe.
-5. A credential value never enters a prompt, a return value, a log, or an error.
-   An error from your credential source is replaced, because the original can
-   quote the value.
+4. `browser_screenshot` covers those fields during capture, so a picture
+   holding a secret never exists. `screenshotPage` and `screenshotCanvas` do
+   not redact; use them on a page you know to be safe.
+5. A credential value never enters a prompt, a return value, a log, or an
+   error. An error from your credential source is replaced, because the
+   original can quote the value.
 6. An attached session disconnects and never closes a browser you own.
-7. Session state holds an endpoint, a url and a fingerprint. It holds no element
-   index, no cookie and no secret. A url can carry a token, so treat it as
-   sensitive.
+7. Session state holds an endpoint, a url and a fingerprint. It holds no
+   element index, no cookie and no secret. A url can carry a token, so treat it
+   as sensitive.
 8. Text typed through the tools may not hold a control character, because a
    newline is Enter and a tab moves focus.
+
+## Performance
+
+Measured on an Apple M4 Max, macOS 15.7, Node 24, Playwright 1.63, headless
+Chromium. Each figure says how many runs it comes from. Reproduce them with
+`pnpm run test` for correctness and the scripts in `examples/` for timing.
+
+- **4 to 6 ms** to read a whole page, every frame, into a numbered table.
+  Median of 12 runs for each page: 5 ms for a form, 4 ms through nested shadow
+  DOM, 6 ms across a cross-origin iframe, 6 ms for a 10-control page.
+- **266 ms** median for one decision from the live classifier, over 8 calls.
+  Across 34 decisions in an earlier run: 170 ms warm, 379 ms for the first call
+  of a run.
+- **29 ms** median to act: re-resolve the element, re-validate it, dispatch
+  real mouse and keyboard input.
+- **1,289 ms** median for a whole task, over 27 runs across 9 journeys.
+- **281 ms** to attach to a remote browser, **133 ms** to read a page on it.
+
+## Limits and risks
+
+- The classifier declines some tasks it could finish. In one journey it chose
+  `BLOCKED` while a usable link was in its own table. The policy is sensitive
+  to the words in the goal.
+- The classifier finished 25/27 benchmark tasks; the LLM-decides control
+  finished 27/27. You trade some success rate for speed.
+- A task that types text needs a second model. Both it and the classifier are
+  network calls, and both can fail.
+- A `DONE` decision is an opinion. Confirm the result from the page.
+- A page evaluation has no deadline of its own. A page that suspends animation
+  frames can outlast `settle`.
+- The test fixtures are local. They hold a login, but no consent banner, no
+  single-page route change, and no bot detection. Behavior against those is
+  unverified.
 
 ## Tests
 
@@ -155,21 +269,12 @@ pnpm run test    # 79 tests, real Chromium, local fixtures, no network
 pnpm run types
 ```
 
-## Limits
+## License
 
-- The classifier declines some tasks it could finish. In one journey it chose
-  `BLOCKED` while a usable link was in its own table. The policy is sensitive to
-  the words in the goal.
-- A task that types text needs a second model. Both it and the classifier are
-  network calls, and both can fail.
-- A `DONE` decision is an opinion. Confirm the result from the page.
-- A page evaluation has no deadline of its own. A page that suspends animation
-  frames can outlast `settle`.
-- The fixtures are local. They hold a login, but no consent banner, no
-  single-page route change, and no bot detection.
+MIT. See LICENSE.
 
 ## Credit
 
 This library reimplements the design of
-[jev-ultrafast](https://github.com/browser-use/jev-ultrafast) by Browser Use, in
-TypeScript. See NOTICE.
+[jev-ultrafast](https://github.com/browser-use/jev-ultrafast) by Browser Use,
+in TypeScript. See NOTICE.
