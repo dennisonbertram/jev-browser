@@ -857,10 +857,25 @@
       action.currentValue = picked;
     }
     if (kind === "fill") {
-      action.value = el.value !== undefined ? el.value : "";
-      action.currentValue = action.value;
-      var described = ariaDescribedBy(el);
-      if (described) action.currentValue = action.currentValue; // describedby carried via label chain only
+      // A field that holds a secret by its own nature never gives up its
+      // value. The value used to be copied here, so it reached the numbered
+      // table a model reads and the classifier request. Only the length
+      // leaves, so "the field has something in it" is still expressible.
+      var autofill = (el.getAttribute("autocomplete") || "").toLowerCase();
+      var inputType = (el.getAttribute("type") || "text").toLowerCase();
+      var secret =
+        inputType === "password" ||
+        autofill === "current-password" ||
+        autofill === "new-password" ||
+        autofill === "one-time-code";
+      if (secret) {
+        action.sensitive = true;
+        action.value = "";
+        action.currentValue = el.value ? "(" + String(el.value.length) + " characters, hidden)" : "";
+      } else {
+        action.value = el.value !== undefined ? el.value : "";
+        action.currentValue = action.value;
+      }
     }
     if (el.checked !== undefined && kind === "click")
       action.checked = !!el.checked;

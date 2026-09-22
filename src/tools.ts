@@ -29,6 +29,8 @@ export type ToolDefinition = {
 export type ToolResult = {
   text: string;
   ok: boolean;
+  /** PNG bytes, for a tool that returns a picture. */
+  image?: Buffer;
 };
 
 export type ToolHost = {
@@ -266,7 +268,16 @@ export function createToolHost(options: ToolHostOptions): ToolHost {
             }
             return no(`No control has index ${index} in the latest observation.`);
           }
+          const startedAct = Date.now();
           await execute(options.context, observation!, action, { uploadDir: options.uploadDir });
+          options.tracer?.emit({
+            type: "act",
+            at: startedAct,
+            ms: Date.now() - startedAct,
+            kind: action.kind,
+            label: action.label,
+            ok: true,
+          });
           return ok(`Did ${action.kind} on ${action.label}.`);
         }
 
@@ -274,9 +285,23 @@ export function createToolHost(options: ToolHostOptions): ToolHost {
           const missing = needObservation();
           if (missing) return missing;
           const index = input.index as number;
+          const text = input.text as string;
+          // A newline or a tab becomes Enter or Tab when typed, which submits a
+          // form or moves focus. Text is a field value here, never a key.
+          if (/[\u0000-\u001f\u007f]/u.test(text)) {
+            return no("Text may not contain a control character. Use browser_act for a key.");
+          }
           const action = actionFor(index, ["TYPE_TEXT"]);
           if (!action) return no(`No text field has index ${index} in the latest observation.`);
-          await execute(options.context, observation!, action, { text: input.text as string });
+          const startedType = Date.now();
+          await execute(options.context, observation!, action, { text });
+          options.tracer?.emit({
+            type: "text",
+            at: startedType,
+            ms: Date.now() - startedType,
+            field: action.label,
+            characters: text.length,
+          });
           return ok(`Typed into ${action.label}.`);
         }
 
@@ -296,8 +321,13 @@ export function createToolHost(options: ToolHostOptions): ToolHost {
           if (missing) return missing;
           const page = getActivePage(options.context);
           if (!page) return no("There is no active page.");
-          const shot = await screenshotRedacted(page, observation!, secretRegions(observation!));
-          return ok(`Picture of ${shot.rect.width}x${shot.rect.height} at scale ${shot.scale}, secrets covered.`);
+          const regions = secretRegions(observation!);
+          const shot = await screenshotRedacted(page, observation!, regions);
+          return {
+            ok: true,
+            text: `Picture of ${shot.rect.width}x${shot.rect.height} at scale ${shot.scale}. ${regions.length} secret region(s) covered.`,
+            image: shot.image,
+          };
         }
 
         case "browser_scroll": {

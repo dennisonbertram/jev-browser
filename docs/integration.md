@@ -11,7 +11,7 @@ Read `README.md` first for what the library does.
 | `TYPESAFE_API_KEY` | The classifier that selects an operation and a target. |
 | `TEXT_MODEL_API_KEY` and `TEXT_MODEL_BASE_URL` | Only for tasks that type text. Any OpenAI-compatible endpoint works. |
 | A credential source | Only for tasks that log in. The library never holds a secret itself. |
-| An upload directory | Only for tasks that attach a file. The library never accepts a path from a model. |
+| An upload directory | Required for any task that attaches a file. Without it an upload is refused. The library never accepts a path from a model. |
 
 ## Way 1: run one task
 
@@ -138,8 +138,10 @@ const host = createToolHost({ context, tracer });
 console.log(tracer.summary());
 ```
 
-A `text` event records the number of characters, never the text, because a field
-value can be a secret.
+The tool surface records an event for each observation, each action and each
+typing call. A `text` event records the number of characters, never the text,
+because a field value can be a secret. `runOnce` does not take a tracer yet;
+use the tool surface when you need telemetry.
 
 ## Rules the library keeps, so your product does not have to
 

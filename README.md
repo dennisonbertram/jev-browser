@@ -56,7 +56,7 @@ guess the contents.
 | `browser_act` | Click the control at an index, or choose a select option. |
 | `browser_type` | Type caller text into the field at an index. |
 | `browser_login` | Fill the credential fields from the source you supplied. |
-| `browser_screenshot` | Return a picture with the secret regions covered. |
+| `browser_screenshot` | Return a picture, as PNG bytes, with the secret regions covered. |
 | `browser_scroll` | Scroll one region, up or down. |
 | `browser_switch_tab` | Make another open tab active. |
 
@@ -129,14 +129,22 @@ Measured against a Kernel browser: attach 419 ms, and one observation 211 ms.
    code. It returns an index into a table this library observed.
 2. The library resolves that index to a node, and checks the node again
    immediately before it sends input. A stale decision is refused, not applied.
-3. A screenshot covers the secret regions during capture. A picture that holds
-   a secret never exists in memory.
-4. A credential value never enters a prompt, a return value, a log, or an error
+3. A field that holds a secret by its nature never gives up its value. A
+   password, a one-time code and a new password report only a character count,
+   so the value cannot reach the table a model reads, the classifier request, or
+   the run history.
+4. `browser_screenshot` covers those fields during capture. A picture that holds
+   a secret never exists in memory. `screenshotPage` and `screenshotCanvas` do
+   not redact: they are for a page you know to be safe.
+5. A credential value never enters a prompt, a return value, a log, or an error
    message. An error from your credential source is replaced, because the
    original can quote the value.
-5. An attached session disconnects. It never closes a browser your product owns.
-6. Session state holds an endpoint, a url and a fingerprint. It holds no element
-   index, no cookie and no secret.
+6. An attached session disconnects. It never closes a browser your product owns.
+7. Session state holds an endpoint, a url and a fingerprint. It holds no element
+   index, no cookie and no secret. A url can itself carry a token, so treat the
+   state as sensitive.
+8. Text typed through the tool surface may not contain a control character,
+   because a newline is Enter and a tab moves focus.
 
 ## Limits
 

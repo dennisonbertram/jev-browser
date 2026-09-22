@@ -10,10 +10,9 @@ import type { BrowserContext, Frame, Page } from "playwright";
 import { StalePage } from "./types.ts";
 import type { NodeRef, ObservedAction, PageObservation } from "./types.ts";
 
-const DEFAULT_UPLOAD_DIR = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "uploads"
-);
+// No default. A product must name the directory it allows, or an upload is
+// refused: a fallback inside the source tree uploaded whatever happened to sit
+// there, which the documentation denied.
 
 const PRESS_KEY_ALLOWLIST = new Set([
   "Enter",
@@ -472,7 +471,12 @@ export async function execute(
         ref.node,
         action.guard
       );
-      const dir = path.resolve(opts.uploadDir ?? DEFAULT_UPLOAD_DIR);
+      if (!opts.uploadDir) {
+        throw new Error(
+          "An upload needs an uploadDir. The library never chooses a directory for you."
+        );
+      }
+      const dir = path.resolve(opts.uploadDir);
       const filePath = await pickUploadFile(dir);
       const handle = await frame.evaluateHandle(
         (n) =>

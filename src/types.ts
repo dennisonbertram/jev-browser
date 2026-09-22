@@ -77,6 +77,12 @@ export type ObservedAction = {
     | "Backspace";
   /** Index into PageObservation.tabs for kind "switch_tab". */
   tabIndex?: number;
+  /**
+   * True when the field holds a secret by its own nature: a password input, or
+   * an autocomplete of current-password, new-password or one-time-code. Its
+   * value is never copied into the action.
+   */
+  sensitive?: boolean;
   /** Opaque node-identity + nearby-context hash, re-checked immediately before execution. */
   guard: string;
 };

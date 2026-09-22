@@ -5,9 +5,20 @@
   "description": "A browser agent that chooses an action from an indexed table of page controls instead of generating one.",
   "type": "module",
   "license": "MIT",
-  "engines": { "node": ">=22" },
-  "exports": { ".": "./src/index.ts" },
-  "files": ["src", "docs", "README.md", "LICENSE", "NOTICE"],
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "docs/integration.md",
+    "docs/accessible-names.md",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
   "scripts": {
     "check": "npm run types && npm run test",
     "types": "tsc --noEmit",
