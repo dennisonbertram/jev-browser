@@ -20,7 +20,7 @@ export { run, runOnce } from "./run.ts";
 export type { HistoryEntry as RunStep, RunOptions, RunResult } from "./run.ts";
 
 // Observation, decision, execution
-export { observe, fresh, settle } from "./observe.ts";
+export { observe, fresh, settle, closedShadowHosts } from "./observe.ts";
 export { decide, fieldText } from "./decide.ts";
 export type { FieldTextContext } from "./decide.ts";
 export { execute, getActivePage } from "./execute.ts";

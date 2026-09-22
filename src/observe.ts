@@ -203,7 +203,16 @@ function fingerprint(
 
 export async function observe(
   target: BrowserTarget,
-  opts?: { screenshot?: boolean }
+  opts?: {
+    screenshot?: boolean;
+    /**
+     * Count closed shadow roots. On by default. It is a diagnostic, not an
+     * input to any decision, and it costs a full CDP DOM tree: 26 ms of a
+     * 54 ms observation on a real page. A loop that observes every turn
+     * should turn it off and count once at the end.
+     */
+    diagnostics?: boolean;
+  }
 ): Promise<PageObservation> {
   const context = contextOf(target);
   const src = readFileSync(SNAPSHOT_PATH, "utf8");
@@ -337,7 +346,8 @@ export async function observe(
     }
   }
 
-  closedShadowHosts = await countClosedShadowRoots(active);
+  closedShadowHosts =
+    opts?.diagnostics === false ? 0 : await countClosedShadowRoots(active);
 
   const orderedPages = [active, ...pages.filter((p) => p !== active)];
   const tabs = await Promise.all(
@@ -612,4 +622,16 @@ export async function settle(
   } catch {
     // never throw out of settle()
   }
+}
+
+/**
+ * How many closed shadow roots the active page holds.
+ *
+ * A closed root is unreachable by design, so this is the honest signal that
+ * part of the page cannot be described. Call it once when a run ends, rather
+ * than on every observation.
+ */
+export async function closedShadowHosts(target: BrowserTarget): Promise<number> {
+  const page = getActivePage(contextOf(target));
+  return page ? countClosedShadowRoots(page) : 0;
 }

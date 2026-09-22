@@ -165,4 +165,18 @@ export type Decision = {
 };
 
 /** Thrown when an observation no longer describes the live page. Never a failure of the agent. */
-export class StalePage extends Error {}
+export class StalePage extends Error {
+  /**
+   * Whether input had already been dispatched when this was thrown.
+   *
+   * A fill clicks the field and presses select-all before it re-checks the
+   * page, so a failure there has already changed it. The caller must not
+   * replay such an action from a cached decision; it has to look again.
+   */
+  readonly afterInput: boolean;
+
+  constructor(message: string, afterInput = false) {
+    super(message);
+    this.afterInput = afterInput;
+  }
+}

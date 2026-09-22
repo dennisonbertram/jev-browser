@@ -13,7 +13,7 @@ import type { Browser, BrowserContext, Page } from "playwright";
 import { actionSpace } from "./actions.ts";
 import { decide, fieldText } from "./decide.ts";
 import { execute, getActivePage } from "./execute.ts";
-import { fresh, observe, settle } from "./observe.ts";
+import { closedShadowHosts, fresh, observe, settle } from "./observe.ts";
 import {
   StalePage,
   type Decision,
@@ -87,7 +87,7 @@ export async function run(
 
   const history: HistoryEntry[] = [];
   const decisions: (Decision & { elapsedMs: number })[] = [];
-  let observation = await observe(context, { screenshot: options.screenshots });
+  let observation = await observe(context, { screenshot: options.screenshots, diagnostics: false });
   let status: "ready" | "done" | "blocked" = "ready";
   let reason = "the loop ended without a stated reason";
   // Keyed by the entire text-helper input, so a generated value survives a
@@ -115,7 +115,7 @@ export async function run(
     }
     if (!(await fresh(context, observation))) {
       if (process.env.JEV_TRACE_WASTE) console.error("      [waste] pre-decide re-observe");
-      observation = await observe(context, { screenshot: options.screenshots });
+      observation = await observe(context, { screenshot: options.screenshots, diagnostics: false });
     }
 
     const decision = await decide(observation, goal, history);
@@ -127,7 +127,7 @@ export async function run(
       // A terminal choice is only accepted against the page it was made on.
       if (!(await fresh(context, observation))) {
         if (process.env.JEV_TRACE_WASTE) console.error("      [waste] terminal-not-fresh");
-        observation = await observe(context, { screenshot: options.screenshots });
+        observation = await observe(context, { screenshot: options.screenshots, diagnostics: false });
         continue;
       }
       status = decision.operation === "DONE" ? "done" : "blocked";
@@ -216,7 +216,7 @@ export async function run(
             };
             history.push(barren);
             options.onStep?.(barren);
-            observation = await observe(context, { screenshot: options.screenshots });
+            observation = await observe(context, { screenshot: options.screenshots, diagnostics: false });
             continue;
           }
           usage.text_calls += 1;
@@ -238,7 +238,10 @@ export async function run(
         reason = "the page kept changing under every attempted action";
         break;
       }
-      observation = await observe(context, { screenshot: options.screenshots });
+      observation = await observe(context, { screenshot: options.screenshots, diagnostics: false });
+      // Only a failure that happened before any input can be replayed. A
+      // fill that already clicked and pressed select-all has changed the
+      // page, so its decision has to be made again against what is there.
       continue;
     }
     staleRetries = 0;
@@ -269,7 +272,7 @@ export async function run(
       action,
       action.ref ? before.markers[action.ref.frameId] : undefined
     );
-    observation = await observe(context, { screenshot: options.screenshots });
+    observation = await observe(context, { screenshot: options.screenshots, diagnostics: false });
     entry.pageChanged = observation.fingerprint !== before.fingerprint;
     entry.url = observation.url;
     entry.elapsedMs = since();
@@ -291,7 +294,8 @@ export async function run(
     decisions,
     elapsedMs: since(),
     canvases: observation.canvases,
-    closedShadowHosts: observation.closedShadowHosts,
+    // Counted once here, not on every observation of the loop.
+    closedShadowHosts: await closedShadowHosts(context),
     frames: observation.frames,
     tabs: observation.tabs,
     usage,
@@ -309,6 +313,7 @@ function textKey(
     action.label,
     action.role,
     action.currentValue ?? action.value,
+    action.group,
     observation.title,
     observation.text.slice(0, 6000),
     history.slice(-6).map((entry) => [entry.action, entry.text]),

@@ -76,7 +76,9 @@ async function checkFreshness(
   frame: Frame,
   frameId: string,
   node: number | undefined,
-  guard: string
+  guard: string,
+  /** True once input has been dispatched, so the caller cannot replay. */
+  afterInput = false
 ): Promise<void> {
   const expectedMarker = observation.markers[frameId];
   const liveMarker = await frame
@@ -87,7 +89,7 @@ async function checkFreshness(
     )
     .catch(() => undefined);
   if (liveMarker === undefined || liveMarker !== expectedMarker) {
-    throw new StalePage(`frame ${frameId} marker changed`);
+    throw new StalePage(`frame ${frameId} marker changed`, afterInput);
   }
   // The decision was made from every frame in the tab, so every frame has to
   // still hold. Checked in parallel; there are rarely more than a handful.
@@ -135,7 +137,10 @@ async function checkFreshness(
     )
     .catch(() => null);
   if (liveGuard === null || liveGuard !== guard) {
-    throw new StalePage(`node ${node} in frame ${frameId} guard mismatch`);
+    throw new StalePage(
+      `node ${node} in frame ${frameId} guard mismatch`,
+      afterInput
+    );
   }
 }
 
@@ -377,12 +382,15 @@ export async function execute(
       await page.keyboard.press(selectAllKey);
       // Text generation took real time; re-check before typing so a page that
       // changed underneath the async fill call is caught, not typed into.
+      // The click and the select-all above have already landed, so a failure
+      // from here on is marked: the caller must not replay this action.
       await checkFreshness(
         observation,
         frame,
         ref.frameId,
         ref.node,
-        action.guard
+        action.guard,
+        true
       );
       await page.keyboard.type(opts.text);
       return { executed: action.id };
