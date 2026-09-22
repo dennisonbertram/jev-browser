@@ -4,6 +4,16 @@ A browser agent that picks its next action from a numbered table of the page's
 controls. It does not write the action. A classifier chooses one operation and
 one element; a small language model runs only to write field text.
 
+## Side by side on yahoo.com
+
+![jev-browser against a production worker on yahoo.com](docs/jev-vs-production-worker.gif)
+
+Both agents received the goal "Open the Finance section." on the same site, in
+the same browser, run back to back. jev-browser finished in **2.13 s** with 2
+decisions. The production worker finished in **8.20 s** with 4 decisions. The
+film is [docs/jev-vs-production-worker.mp4](docs/jev-vs-production-worker.mp4),
+and each clip starts when its agent starts, after the page has loaded.
+
 ## Measured on this machine
 
 - **4 to 6 ms** to read a whole page, every frame, into a numbered table.
