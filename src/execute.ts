@@ -202,7 +202,27 @@ async function resolveHitPoint(
  * another one that slid into its place.
  */
 /** Does the node we chose actually hold focus, piercing open shadow roots? */
+/**
+ * Whether the node holds focus, waiting briefly for it to arrive.
+ *
+ * A click's focus is not always synchronous: a page can move focus in a
+ * handler, or re-render the field and focus the replacement. Checking once
+ * turned that into a stale page, which costs a whole re-decide. On Google
+ * Flights that happened 4 times in a 10-action run.
+ *
+ * The check itself still matters and is unchanged. If another element really
+ * has focus, this still says so, and nothing is typed.
+ */
 async function holdsFocus(frame: Frame, node: number): Promise<boolean> {
+  const deadline = Date.now() + 150;
+  for (;;) {
+    if (await holdsFocusNow(frame, node)) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function holdsFocusNow(frame: Frame, node: number): Promise<boolean> {
   return frame
     .evaluate((n) => {
       const registry = (

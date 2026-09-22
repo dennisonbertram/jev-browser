@@ -63,6 +63,14 @@ for (let rep = 1; rep <= REPS; rep += 1) {
       `${result.history.length} actions  ${result.usage.text_calls} text calls  ` +
       `${result.usage.input_tokens} in / ${result.usage.output_tokens} out`
   );
+  // Where the wall clock went. Anything not spent waiting on a model is
+  // spent in the browser: settling, observing and executing.
+  const classifierMs = result.decisions.reduce((sum, d) => sum + d.latencyMs, 0);
+  const textMs = result.history.reduce((sum, h) => sum + h.textLatencyMs, 0);
+  const browserMs = result.elapsedMs - classifierMs - textMs;
+  console.log(
+    `  time: classifier ${classifierMs}ms  text ${textMs}ms  browser ${browserMs}ms`
+  );
   console.log(
     `  independent check: zurich=${sawZurich} london=${sawLondon} flight options=${sawFlights}`
   );

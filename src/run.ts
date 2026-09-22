@@ -114,6 +114,7 @@ export async function run(
       break;
     }
     if (!(await fresh(context, observation))) {
+      if (process.env.JEV_TRACE_WASTE) console.error("      [waste] pre-decide re-observe");
       observation = await observe(context, { screenshot: options.screenshots });
     }
 
@@ -125,6 +126,7 @@ export async function run(
     if (decision.operation === "DONE" || decision.operation === "BLOCKED") {
       // A terminal choice is only accepted against the page it was made on.
       if (!(await fresh(context, observation))) {
+        if (process.env.JEV_TRACE_WASTE) console.error("      [waste] terminal-not-fresh");
         observation = await observe(context, { screenshot: options.screenshots });
         continue;
       }
@@ -184,6 +186,7 @@ export async function run(
           text = generated.value;
           textLatencyMs = generated.latencyMs;
           if (text === "") {
+            if (process.env.JEV_TRACE_WASTE) console.error("      [waste] empty-text", action.label);
             emptyText += 1;
             if (emptyText > MAX_EMPTY_TEXT) {
               status = "blocked";
@@ -228,6 +231,7 @@ export async function run(
       pendingText.clear();
     } catch (error) {
       if (!(error instanceof StalePage)) throw error;
+      if (process.env.JEV_TRACE_WASTE) console.error("      [waste] stale:", String(error).slice(0, 80));
       staleRetries += 1;
       if (staleRetries > MAX_STALE_RETRIES) {
         status = "blocked";
