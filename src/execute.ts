@@ -110,26 +110,17 @@ async function checkFreshness(
         if (typeof id === "string") byId.set(id, candidate);
       })
   );
-  const stale = await Promise.all(
-    others.map(async (id) => {
-      const other = byId.get(id);
-      // Every observed marker came from THIS tab, so a frame that is now gone
-      // or detached is changed evidence, not an irrelevant other-tab frame.
-      if (!other || other.isDetached()) return id;
-      const live = await other
-        .evaluate(() =>
-          (
-            window as unknown as { __jevFast: { marker(): string } }
-          ).__jevFast.marker()
-        )
-        .catch(() => undefined);
-      return live === observation.markers[id] ? null : id;
-    })
-  );
-  const changed = stale.find((id) => id !== null);
-  if (changed !== undefined)
+  // Another frame's content is not evidence about this one. Google Flights
+  // carries an iframe that rewrites itself continuously, and comparing its
+  // marker threw away 5 good decisions in two runs. A frame that has gone
+  // away still counts: the decision was made from a tab that had it.
+  const missing = others.find((id) => {
+    const other = byId.get(id);
+    return !other || other.isDetached();
+  });
+  if (missing !== undefined)
     throw new StalePage(
-      `frame ${changed} changed while the decision was being made`
+      `frame ${missing} is gone since the decision was made`
     );
   if (node === undefined) return;
   const liveGuard = await frame
