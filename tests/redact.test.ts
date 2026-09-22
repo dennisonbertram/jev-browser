@@ -8,9 +8,9 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
-import { observe } from "../src/observe.ts";
-import { screenshotRedacted, secretRegions } from "../src/redact.ts";
-import { start, stop } from "./fixtures/serve.ts";
+import { observe } from "../src/observe.js";
+import { screenshotRedacted, secretRegions } from "../src/redact.js";
+import { start, stop } from "./fixtures/serve.js";
 
 let browser: Browser;
 let server: Awaited<ReturnType<typeof start>>;

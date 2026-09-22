@@ -21,7 +21,7 @@ import {
   secretRegions,
   type ObservedAction,
   type PageObservation,
-} from "../src/index.ts";
+} from "../src/index.js";
 
 let browser: Browser;
 

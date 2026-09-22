@@ -8,10 +8,10 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromium, type Browser } from "playwright";
-import { observe, settle } from "../src/observe.ts";
-import { execute, getActivePage } from "../src/execute.ts";
-import { StalePage } from "../src/types.ts";
-import { start, stop } from "./fixtures/serve.ts";
+import { observe, settle } from "../src/observe.js";
+import { execute, getActivePage } from "../src/execute.js";
+import { StalePage } from "../src/types.js";
+import { start, stop } from "./fixtures/serve.js";
 
 let browser: Browser;
 let server: Awaited<ReturnType<typeof start>>;

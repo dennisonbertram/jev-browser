@@ -8,8 +8,8 @@
  *   npx tsx examples/standalone.ts            # against a local fixture
  *   npx tsx examples/standalone.ts <url>      # against any page
  */
-import { createToolHost, launchLocal } from "../src/index.ts";
-import { start, stop } from "../tests/fixtures/serve.ts";
+import { createToolHost, launchLocal } from "../src/index.js";
+import { start, stop } from "../tests/fixtures/serve.js";
 
 const target = process.argv[2];
 const fixtures = target ? null : await start(0);

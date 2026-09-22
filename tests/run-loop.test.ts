@@ -7,7 +7,7 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { chromium, type Browser } from "playwright";
-import { run, type RunStep } from "../src/index.ts";
+import { run, type RunStep } from "../src/index.js";
 
 let browser: Browser;
 const realFetch = globalThis.fetch;

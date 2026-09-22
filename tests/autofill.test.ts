@@ -1,8 +1,8 @@
 import { chromium, type Browser, type BrowserContext } from "playwright";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { fillCredentials, findCredentialFields } from "../src/autofill.ts";
-import { observe } from "../src/observe.ts";
-import { start, stop } from "./fixtures/serve.ts";
+import { fillCredentials, findCredentialFields } from "../src/autofill.js";
+import { observe } from "../src/observe.js";
+import { start, stop } from "./fixtures/serve.js";
 
 describe("credential autofill", () => {
   let browser: Browser;

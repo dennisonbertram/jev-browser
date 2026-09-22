@@ -1,23 +1,27 @@
 {
   "name": "jev-browser",
   "version": "0.1.0",
-  "private": true,
-  "description": "A browser agent that chooses an action from an indexed table of page controls instead of generating one.",
+  "description": "A fast browser agent. It picks an action from a numbered table of the page's real controls instead of writing a selector, so one step is a single small-model call.",
   "type": "module",
   "license": "MIT",
   "engines": {
     "node": ">=22"
   },
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
   },
   "files": [
-    "src",
-    "docs/integration.md",
-    "docs/accessible-names.md",
+    "dist",
     "README.md",
     "LICENSE",
-    "NOTICE"
+    "NOTICE",
+    "docs/integration.md",
+    "docs/accessible-names.md"
   ],
   "scripts": {
     "check": "npm run types && npm run test",
@@ -25,7 +29,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "fixtures": "tsx tests/fixtures/serve.ts",
-    "example": "tsx examples/live.ts"
+    "example": "tsx examples/live.ts",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && cp src/snapshot-dom.js dist/snapshot-dom.js",
+    "prepublishOnly": "npm run build && npm run check"
   },
   "dependencies": {
     "playwright": "^1.63.0"
@@ -35,5 +41,28 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.0",
     "vitest": "^4.1.0"
-  }
+  },
+  "keywords": [
+    "browser-agent",
+    "browser-automation",
+    "playwright",
+    "agent",
+    "ai-agent",
+    "web-agent",
+    "shadow-dom",
+    "accessibility",
+    "llm"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dennisonbertram/jev-browser.git"
+  },
+  "homepage": "https://github.com/dennisonbertram/jev-browser#readme",
+  "bugs": {
+    "url": "https://github.com/dennisonbertram/jev-browser/issues"
+  },
+  "author": "Dennison Bertram",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts"
 }

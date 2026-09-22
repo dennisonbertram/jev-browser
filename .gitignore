@@ -4,3 +4,5 @@ traces/
 .env
 .env.*
 !.env.example
+dist/
+*.tgz

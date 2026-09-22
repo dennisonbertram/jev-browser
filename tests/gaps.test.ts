@@ -10,10 +10,10 @@ import { fileURLToPath } from "node:url";
 const UPLOAD_DIR = fileURLToPath(new URL("./uploads/", import.meta.url));
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromium, type Browser, type BrowserContext } from "playwright";
-import { execute, getActivePage } from "../src/execute.ts";
-import { fresh, observe, settle } from "../src/observe.ts";
-import { start, stop } from "./fixtures/serve.ts";
-import type { ObservedAction, PageObservation } from "../src/types.ts";
+import { execute, getActivePage } from "../src/execute.js";
+import { fresh, observe, settle } from "../src/observe.js";
+import { start, stop } from "./fixtures/serve.js";
+import type { ObservedAction, PageObservation } from "../src/types.js";
 
 // Ephemeral ports: this suite must not collide with fixtures.test.ts, which
 // uses the documented fixed pair.

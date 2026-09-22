@@ -3,10 +3,10 @@
 // holds here too: a caller passes an index into PageObservation.canvases and
 // fractions of that region, never a page coordinate. The library re-resolves
 // the region against the live page and converts the fraction to a point.
-export type { Rect } from "./types.ts";
+export type { Rect } from "./types.js";
 import type { ElementHandle, Frame, Page } from "playwright";
-import { StalePage } from "./types.ts";
-import type { NodeRef, PageObservation, Rect } from "./types.ts";
+import { StalePage } from "./types.js";
+import type { NodeRef, PageObservation, Rect } from "./types.js";
 
 
 /** A picture of the page, or of one region of it. */

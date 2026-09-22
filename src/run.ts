@@ -8,18 +8,18 @@
  * post-action observation, so a stale read cannot erase it.
  */
 import { readdirSync } from "node:fs";
-import { contextOf, type BrowserTarget } from "./target.ts";
+import { contextOf, type BrowserTarget } from "./target.js";
 import type { Browser, BrowserContext, Page } from "playwright";
-import { actionSpace } from "./actions.ts";
-import { decide, fieldText } from "./decide.ts";
-import { execute, getActivePage } from "./execute.ts";
-import { closedShadowHosts, fresh, observe, settle } from "./observe.ts";
+import { actionSpace } from "./actions.js";
+import { decide, fieldText } from "./decide.js";
+import { execute, getActivePage } from "./execute.js";
+import { closedShadowHosts, fresh, observe, settle } from "./observe.js";
 import {
   StalePage,
   type Decision,
   type ObservedAction,
   type PageObservation,
-} from "./types.ts";
+} from "./types.js";
 
 const MAX_ACTIONS = 30;
 const MAX_DECISIONS = MAX_ACTIONS * 2;

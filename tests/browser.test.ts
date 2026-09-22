@@ -5,9 +5,9 @@
  * an attached session must never close a browser this process did not start.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { attachOverCdp, launchLocal } from "../src/browser.ts";
-import type { BrowserSession } from "../src/browser.ts";
-import { start, stop } from "./fixtures/serve.ts";
+import { attachOverCdp, launchLocal } from "../src/browser.js";
+import type { BrowserSession } from "../src/browser.js";
+import { start, stop } from "./fixtures/serve.js";
 import { createServer, type Socket } from "node:net";
 import { createServer as createHttpServer } from "node:http";
 import { execFile } from "node:child_process";

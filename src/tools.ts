@@ -12,14 +12,14 @@
  * element. No tool accepts a selector, an XPath, a coordinate, or code.
  */
 import type { BrowserContext } from "playwright";
-import { actionSpace, type ActionSpace } from "./actions.ts";
-import { contextOf, type BrowserTarget } from "./target.ts";
-import { fillCredentials, type CredentialSource } from "./autofill.ts";
-import { execute, getActivePage } from "./execute.ts";
-import { observe } from "./observe.ts";
-import { screenshotRedacted, secretRegions } from "./redact.ts";
-import type { Tracer } from "./trace.ts";
-import type { ObservedAction, Operation, PageObservation } from "./types.ts";
+import { actionSpace, type ActionSpace } from "./actions.js";
+import { contextOf, type BrowserTarget } from "./target.js";
+import { fillCredentials, type CredentialSource } from "./autofill.js";
+import { execute, getActivePage } from "./execute.js";
+import { observe } from "./observe.js";
+import { screenshotRedacted, secretRegions } from "./redact.js";
+import type { Tracer } from "./trace.js";
+import type { ObservedAction, Operation, PageObservation } from "./types.js";
 
 export type ToolDefinition = {
   name: string;

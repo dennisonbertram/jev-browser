@@ -1,7 +1,7 @@
-import { attachOverCdp } from "./browser.ts";
-import type { BrowserSession } from "./browser.ts";
-import { observe } from "./observe.ts";
-import type { PageObservation } from "./types.ts";
+import { attachOverCdp } from "./browser.js";
+import type { BrowserSession } from "./browser.js";
+import { observe } from "./observe.js";
+import type { PageObservation } from "./types.js";
 import type { Page } from "playwright";
 
 /** Everything a later process needs to continue against the same browser. */

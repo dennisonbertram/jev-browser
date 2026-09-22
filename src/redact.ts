@@ -10,8 +10,8 @@
  */
 import { randomUUID } from "node:crypto";
 import type { Frame, Locator, Page } from "playwright";
-import { StalePage, type NodeRef, type PageObservation, type Rect } from "./types.ts";
-import type { Shot } from "./vision.ts";
+import { StalePage, type NodeRef, type PageObservation, type Rect } from "./types.js";
+import type { Shot } from "./vision.js";
 
 /** A region to cover, named by an observed node. */
 export type MaskTarget = NodeRef;

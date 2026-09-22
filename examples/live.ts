@@ -11,7 +11,7 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { chromium } from "playwright";
-import { runOnce } from "../src/run.ts";
+import { runOnce } from "../src/run.js";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => {

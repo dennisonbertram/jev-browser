@@ -6,10 +6,10 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contextOf, type BrowserTarget } from "./target.ts";
+import { contextOf, type BrowserTarget } from "./target.js";
 import type { BrowserContext, Frame, Page } from "playwright";
-import { StalePage } from "./types.ts";
-import type { NodeRef, ObservedAction, PageObservation } from "./types.ts";
+import { StalePage } from "./types.js";
+import type { NodeRef, ObservedAction, PageObservation } from "./types.js";
 
 // No default. A product must name the directory it allows, or an upload is
 // refused: a fallback inside the source tree uploaded whatever happened to sit

@@ -13,8 +13,8 @@
  *   npx tsx examples/journeys.ts [repetitions]
  */
 import { chromium, type Page } from "playwright";
-import { start, stop } from "../tests/fixtures/serve.ts";
-import { run } from "../src/index.ts";
+import { start, stop } from "../tests/fixtures/serve.js";
+import { run } from "../src/index.js";
 
 type Journey = {
   name: string;

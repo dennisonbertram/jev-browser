@@ -1,14 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { launchLocal } from "../src/browser.ts";
-import type { BrowserSession } from "../src/browser.ts";
+import { launchLocal } from "../src/browser.js";
+import type { BrowserSession } from "../src/browser.js";
 import {
   isSessionState,
   restoreSessionState,
   saveSessionState,
-} from "../src/session-state.ts";
-import { observe } from "../src/observe.ts";
+} from "../src/session-state.js";
+import { observe } from "../src/observe.js";
 import type { Page } from "playwright";
-import { start, stop } from "./fixtures/serve.ts";
+import { start, stop } from "./fixtures/serve.js";
 import net from "node:net";
 
 async function freePort(): Promise<number> {

@@ -4,14 +4,14 @@
 // it never produces a page coordinate.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromium, type Browser, type BrowserContext } from "playwright";
-import { getActivePage } from "../src/execute.ts";
-import { observe } from "../src/observe.ts";
+import { getActivePage } from "../src/execute.js";
+import { observe } from "../src/observe.js";
 import {
   clickInCanvas,
   screenshotCanvas,
   screenshotPage,
-} from "../src/vision.ts";
-import { start, stop } from "./fixtures/serve.ts";
+} from "../src/vision.js";
+import { start, stop } from "./fixtures/serve.js";
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 

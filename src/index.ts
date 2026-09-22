@@ -16,61 +16,61 @@
  */
 
 // The loop
-export { run, runOnce } from "./run.ts";
-export type { HistoryEntry as RunStep, RunOptions, RunResult } from "./run.ts";
+export { run, runOnce } from "./run.js";
+export type { HistoryEntry as RunStep, RunOptions, RunResult } from "./run.js";
 
 // Observation, decision, execution
-export { observe, fresh, settle, closedShadowHosts } from "./observe.ts";
-export { decide, fieldText } from "./decide.ts";
-export type { FieldTextContext } from "./decide.ts";
-export { execute, getActivePage } from "./execute.ts";
-export { actionSpace } from "./actions.ts";
-export type { ActionSpace, SpaceElement } from "./actions.ts";
+export { observe, fresh, settle, closedShadowHosts } from "./observe.js";
+export { decide, fieldText } from "./decide.js";
+export type { FieldTextContext } from "./decide.js";
+export { execute, getActivePage } from "./execute.js";
+export { actionSpace } from "./actions.js";
+export type { ActionSpace, SpaceElement } from "./actions.js";
 
 // The browser, local or remote
-export { attachOverCdp, launchLocal } from "./browser.ts";
+export { attachOverCdp, launchLocal } from "./browser.js";
 export type {
   AttachOverCdpOptions,
   BrowserSession,
   LaunchLocalOptions,
-} from "./browser.ts";
+} from "./browser.js";
 
 // Pictures and coordinates
-export { clickInCanvas, screenshotCanvas, screenshotPage } from "./vision.ts";
-export type { Shot } from "./vision.ts";
-export { screenshotRedacted, secretRegions } from "./redact.ts";
-export type { MaskTarget } from "./redact.ts";
+export { clickInCanvas, screenshotCanvas, screenshotPage } from "./vision.js";
+export type { Shot } from "./vision.js";
+export { screenshotRedacted, secretRegions } from "./redact.js";
+export type { MaskTarget } from "./redact.js";
 
 // Credentials
-export { fillCredentials, findCredentialFields } from "./autofill.ts";
-export type { CredentialSource, FillOutcome } from "./autofill.ts";
+export { fillCredentials, findCredentialFields } from "./autofill.js";
+export type { CredentialSource, FillOutcome } from "./autofill.js";
 
 // Telemetry
-export { createTracer } from "./trace.ts";
-export type { TraceEvent, Tracer } from "./trace.ts";
+export { createTracer } from "./trace.js";
+export type { TraceEvent, Tracer } from "./trace.js";
 
 // State across processes
 export {
   isSessionState,
   restoreSessionState,
   saveSessionState,
-} from "./session-state.ts";
-export type { SessionState } from "./session-state.ts";
+} from "./session-state.js";
+export type { SessionState } from "./session-state.js";
 
 // The tool surface a product mounts
-export { createToolHost } from "./tools.ts";
+export { createToolHost } from "./tools.js";
 export type {
   ToolDefinition,
   ToolHost,
   ToolHostOptions,
   ToolResult,
-} from "./tools.ts";
+} from "./tools.js";
 
 // A context, or any page inside one: every entry point takes either.
-export type { BrowserTarget } from "./target.ts";
+export type { BrowserTarget } from "./target.js";
 
 // Shared types
-export { StalePage } from "./types.ts";
+export { StalePage } from "./types.js";
 export type {
   Decision,
   FrameRef,
@@ -80,4 +80,4 @@ export type {
   Operation,
   PageObservation,
   Rect,
-} from "./types.ts";
+} from "./types.js";

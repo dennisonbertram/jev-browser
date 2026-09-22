@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { chromium, type Browser, type BrowserContext } from "playwright";
 import type { Server } from "node:http";
-import { start, stop } from "./fixtures/serve.ts";
+import { start, stop } from "./fixtures/serve.js";
 
 let primary: { server: Server; port: number };
 let foreign: { server: Server; port: number };

@@ -5,19 +5,19 @@
 // being resolved and executed) we never re-run it, so the node indices and
 // guards a frame handed out stay valid until the next observe(). fresh()
 // re-checks those same indices in place; it never re-snapshots.
-import { contextOf, type BrowserTarget } from "./target.ts";
+import { contextOf, type BrowserTarget } from "./target.js";
 import type { BrowserContext, Frame, Page } from "playwright";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getActivePage } from "./execute.ts";
+import { getActivePage } from "./execute.js";
 import type {
   FrameRef,
   FrameSnapshot,
   ObservedAction,
   PageObservation,
-} from "./types.ts";
+} from "./types.js";
 
 // re-exported so verification scripts / callers don't need their own import
 

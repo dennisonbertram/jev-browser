@@ -6,13 +6,13 @@
  * that validation is the trust boundary between an untrusted probability
  * answer and code that is about to act on the live page.
  */
-import { actionSpace, type ActionSpace, type SpaceElement } from "./actions.ts";
+import { actionSpace, type ActionSpace, type SpaceElement } from "./actions.js";
 import type {
   Decision,
   ObservedAction,
   Operation,
   PageObservation,
-} from "./types.ts";
+} from "./types.js";
 
 // Mirrors run.ts's HistoryEntry shape structurally; decide.ts cannot import
 // it (run.ts imports decide.ts) so it restates just enough of the shape.

@@ -9,7 +9,7 @@ import type {
   ObservedAction,
   Operation,
   PageObservation,
-} from "./types.ts";
+} from "./types.js";
 
 type SpaceOption = {
   index: string;

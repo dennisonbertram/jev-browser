@@ -130,20 +130,36 @@ browsers, session state across processes, and telemetry.
 
 ## Try it in five minutes
 
+Add it to a project:
+
+```sh
+npm install jev-browser
+npx playwright install chromium
+```
+
+Then give it a browser context and a goal:
+
+```ts
+import { chromium } from "playwright";
+import { run } from "jev-browser";
+
+const browser = await chromium.launch();
+const context = await browser.newContext();
+await (await context.newPage()).goto("https://example.com");
+
+const result = await run(context, { goal: "Open the link named More information." });
+console.log(result.status, result.reason, result.elapsedMs);
+await browser.close();
+```
+
+To work on the library itself:
+
 ```sh
 git clone https://github.com/dennisonbertram/jev-browser.git
 cd jev-browser
 pnpm install
 pnpm exec playwright install chromium
 cp .env.example .env
-```
-
-The package is not published to npm. To use it from another project, depend on
-your checkout or on a tarball you build with `npm pack`:
-
-```jsonc
-// package.json
-"dependencies": { "jev-browser": "file:../jev-browser" }
 ```
 
 Node 22 or newer. Chromium only: the library drives Chromium through

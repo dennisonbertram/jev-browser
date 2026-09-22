@@ -5,8 +5,8 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromium, type Browser, type BrowserContext } from "playwright";
-import { createToolHost } from "../src/tools.ts";
-import { start, stop } from "./fixtures/serve.ts";
+import { createToolHost } from "../src/tools.js";
+import { start, stop } from "./fixtures/serve.js";
 
 let browser: Browser;
 let servers: Awaited<ReturnType<typeof start>>[] = [];

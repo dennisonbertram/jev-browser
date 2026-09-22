@@ -1,7 +1,7 @@
-import { contextOf, type BrowserTarget } from "./target.ts";
+import { contextOf, type BrowserTarget } from "./target.js";
 import type { BrowserContext } from "playwright";
-import { execute } from "./execute.ts";
-import type { NodeRef, PageObservation } from "./types.ts";
+import { execute } from "./execute.js";
+import type { NodeRef, PageObservation } from "./types.js";
 
 export type CredentialSource = {
   get: (

@@ -11,7 +11,7 @@
  *   npx tsx examples/flights.ts [reps]
  */
 import { chromium } from "playwright";
-import { run } from "../src/index.ts";
+import { run } from "../src/index.js";
 
 const REPS = Number(process.argv[2] ?? 3);
 const URL = "https://www.google.com/travel/flights?hl=en";
