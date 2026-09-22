@@ -272,15 +272,24 @@ npx tsx examples/flights.ts 5    # one hard journey on Google Flights
 - **14 of 14** journeys pass, 2 repetitions each. Medians: Hacker News
   677 ms, select 654 ms, cross-origin iframe 1.5 s, shadow DOM 1.9 s,
   Wikipedia 2.3 s, MDN 2.6 s, nested scroll 4.2 s.
-- **5 of 5** Google Flights runs reach the flight list, median **10.8 s**,
-  range 9.3 to 13.2 s, 9 actions. At the median that is 4.8 s waiting on the
-  classifier over 21 calls, 0.3 s on the text model, and 6.4 s in the
+- **5 of 5** Google Flights runs reach the flight list, median **8.87 s**,
+  range 8.6 to 9.7 s, 10 actions. At the median that is 5.0 s waiting on the
+  classifier over 22 calls, 0.35 s on the text model, and 3.5 s in the
   browser. Each run is checked against the finished page, not against the
   agent's own `DONE`.
 
-`jev-ultrafast` reports 7.073 s for the same Google Flights journey. We are
-slower. The gap is roughly half per-call classifier latency, which is the
-service and the network rather than this library, and half browser time.
+`jev-ultrafast` reports 7.073 s for the same journey, over 17 decisions at
+178 ms each. We are slower, and the whole difference is classifier time: we
+make 22 calls where they make 17, and each of ours takes about 225 ms from
+this machine. Our browser time, 3.5 s, is below the roughly 4 s their figures
+imply. Both measurements start after the first observation.
+
+Cutting the extra calls is the obvious remaining win and is harder than it
+looks. Most of them are decisions thrown away because the page changed while
+the model was answering. Three separate attempts to keep those decisions, by
+relaxing what counts as a stale page, each made the whole run slower: the
+agent acted on a page that had moved on and needed more actions to recover.
+The freshness checks cost calls and earn them back.
 
 ## Limits and risks
 
