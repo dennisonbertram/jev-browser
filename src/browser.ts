@@ -105,46 +105,98 @@ export async function launchLocal(
     }
   }
 
-  const context = await browser.newContext({ viewport: options.viewport });
-  const page = await context.newPage();
-  return {
-    browser,
-    context,
-    page,
-    cdpUrl,
-    owned: true,
-    close: releaser(browser),
-  };
+  try {
+    const context = await browser.newContext({ viewport: options.viewport });
+    const page = await context.newPage();
+    return {
+      browser,
+      context,
+      page,
+      cdpUrl,
+      owned: true,
+      close: releaser(browser),
+    };
+  } catch (error) {
+    await browser.close().catch(() => {});
+    throw error;
+  }
 }
 
 export async function attachOverCdp(
   cdpUrl: string,
   options: AttachOverCdpOptions = {}
 ): Promise<BrowserSession> {
-  const timeoutMs = options.timeoutMs ?? ATTACH_TIMEOUT_MS;
-  let browser: Browser;
+  const requestedTimeout = options.timeoutMs;
+  if (
+    requestedTimeout !== undefined &&
+    (!Number.isFinite(requestedTimeout) || requestedTimeout <= 0)
+  ) {
+    throw new Error(
+      `Invalid timeoutMs ${String(requestedTimeout)} for CDP endpoint ${cdpUrl}: must be a finite number greater than 0`
+    );
+  }
+  const timeoutMs = requestedTimeout ?? ATTACH_TIMEOUT_MS;
+
+  let browser: Browser | undefined;
+  let timedOut = false;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   try {
-    browser = await chromium.connectOverCDP(cdpUrl, { timeout: timeoutMs });
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        // A stalled context/page setup already holds a connection, so
+        // disconnect it here; the catch below closes again if needed.
+        if (browser) void browser.close().catch(() => {});
+        reject(new Error(`timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
+
+    const work = (async () => {
+      const connected = await chromium.connectOverCDP(cdpUrl, {
+        timeout: timeoutMs,
+      });
+      browser = connected;
+      if (timedOut) {
+        // The deadline fired while connecting; the race already rejected, so
+        // disconnect this late connection instead of leaking it.
+        await connected.close().catch(() => {});
+        throw new Error(`timed out after ${timeoutMs}ms`);
+      }
+      const context =
+        connected.contexts()[0] ??
+        (await connected.newContext({ viewport: options.viewport }));
+      if (timedOut) {
+        await connected.close().catch(() => {});
+        throw new Error(`timed out after ${timeoutMs}ms`);
+      }
+      const page = context.pages()[0] ?? (await context.newPage());
+      if (timedOut) {
+        await connected.close().catch(() => {});
+        throw new Error(`timed out after ${timeoutMs}ms`);
+      }
+      return { connected, context, page };
+    })();
+
+    const { connected, context, page } = await Promise.race([
+      work,
+      timeoutPromise,
+    ]);
+    return {
+      browser: connected,
+      context,
+      page,
+      cdpUrl,
+      owned: false,
+      close: releaser(connected),
+    };
   } catch (error) {
+    if (browser) await browser.close().catch(() => {});
     const detail = error instanceof Error ? `: ${error.message}` : "";
     throw new Error(
       `Could not attach to CDP endpoint ${cdpUrl} within ${timeoutMs}ms${detail}`,
       { cause: error }
     );
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
   }
-
-  // Take the first context and the first page that exist; create them only
-  // when they are absent.
-  const context =
-    browser.contexts()[0] ??
-    (await browser.newContext({ viewport: options.viewport }));
-  const page = context.pages()[0] ?? (await context.newPage());
-  return {
-    browser,
-    context,
-    page,
-    cdpUrl,
-    owned: false,
-    close: releaser(browser),
-  };
 }

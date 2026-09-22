@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { attachOverCdp, launchLocal } from "../src/browser.ts";
 import type { BrowserSession } from "../src/browser.ts";
 import { start, stop } from "./fixtures/serve.ts";
+import { createServer, type Socket } from "node:net";
 
 // Ephemeral ports: start(0) takes a free port, so this suite never collides
 // with the other suites or with a stray local browser.
@@ -91,5 +92,47 @@ describe("attachOverCdp", () => {
     const startedAt = Date.now();
     await expect(attachOverCdp(endpoint)).rejects.toThrow(endpoint);
     expect(Date.now() - startedAt).toBeLessThan(20_000);
+  });
+
+  it("times out when the endpoint accepts but never responds, naming the endpoint", async () => {
+    // A blackhole: the TCP handshake succeeds so connect stalls instead of
+    // refusing at once, proving the deadline bounds the whole attachment.
+    const sockets = new Set<Socket>();
+    const server = createServer((socket) => {
+      sockets.add(socket);
+      socket.on("error", () => {});
+      socket.on("close", () => {
+        sockets.delete(socket);
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    try {
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        throw new Error("expected a TCP address");
+      }
+      const endpoint = `ws://127.0.0.1:${address.port}/devtools/browser/x`;
+      const startedAt = Date.now();
+      await expect(
+        attachOverCdp(endpoint, { timeoutMs: 1500 })
+      ).rejects.toThrow(endpoint);
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+    }
+  }, 10_000);
+
+  it("rejects when timeoutMs is 0", async () => {
+    await expect(
+      attachOverCdp("ws://127.0.0.1:1/devtools/browser/none", {
+        timeoutMs: 0,
+      })
+    ).rejects.toThrow(/timeoutMs/u);
   });
 });
