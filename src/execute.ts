@@ -213,9 +213,54 @@ async function holdsFocus(frame: Frame, node: number): Promise<boolean> {
   const deadline = Date.now() + 150;
   for (;;) {
     if (await holdsFocusNow(frame, node)) return true;
-    if (Date.now() >= deadline) return false;
+    // A node that has left the document will never take focus, so waiting
+    // out the deadline only delays the observation that has to happen.
+    if (!(await isConnected(frame, node))) return false;
+    if (Date.now() >= deadline) break;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
+  // The click did not land focus, but the element is still there and is
+  // still the one the guard matched. Ask it to take focus itself. This
+  // focuses the node that was chosen, never whatever happens to be focused
+  // now, so it cannot type into a different field.
+  return focusDirectly(frame, node);
+}
+
+async function isConnected(frame: Frame, node: number): Promise<boolean> {
+  return frame
+    .evaluate((n) => {
+      const registry = (
+        window as unknown as { __jevFast: { nodes: Map<number, Element> } }
+      ).__jevFast;
+      const target = registry.nodes.get(n);
+      return target !== undefined && target.isConnected;
+    }, node)
+    .catch(() => false);
+}
+
+async function focusDirectly(frame: Frame, node: number): Promise<boolean> {
+  return frame
+    .evaluate((n) => {
+      const registry = (
+        window as unknown as { __jevFast: { nodes: Map<number, Element> } }
+      ).__jevFast;
+      const target = registry.nodes.get(n);
+      if (!(target instanceof HTMLElement) || !target.isConnected) return false;
+      try {
+        target.focus({ preventScroll: true });
+      } catch {
+        return false;
+      }
+      let active: Element | null = document.activeElement;
+      while (active) {
+        if (active === target) return true;
+        const root = active.shadowRoot;
+        if (!root || root.activeElement === null) break;
+        active = root.activeElement;
+      }
+      return false;
+    }, node)
+    .catch(() => false);
 }
 
 async function holdsFocusNow(frame: Frame, node: number): Promise<boolean> {

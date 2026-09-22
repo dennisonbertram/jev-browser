@@ -272,19 +272,21 @@ npx tsx examples/flights.ts 5    # one hard journey on Google Flights
 - **14 of 14** journeys pass, 2 repetitions each. Medians: Hacker News
   677 ms, select 654 ms, cross-origin iframe 1.5 s, shadow DOM 1.9 s,
   Wikipedia 2.3 s, MDN 2.6 s, nested scroll 4.2 s.
-- **5 of 5** Google Flights runs reach the flight list, median **8.87 s**,
-  range 8.6 to 9.7 s, 10 actions. At the median that is 5.0 s waiting on the
-  classifier over 22 calls, 0.35 s on the text model, and 3.5 s in the
-  browser. Each run is checked against the finished page, not against the
-  agent's own `DONE`.
+- **12 of 12** Google Flights runs reach the flight list, median
+  **10.1 s**, range 8.5 to 14.6 s. Roughly half of that is waiting on the
+  classifier, over about 22 calls. Each run is checked against the finished
+  page, not against the agent's own `DONE`: the cities, the one-way setting,
+  the date and visible flight options.
 
 `jev-ultrafast` reports 7.073 s for this journey. Two cautions about that
 comparison, both of which cut against reading too much into any single
 figure. Their number is **one demonstration run**, which their README says
 plainly; ours is the median of five. And repeated batches of five, on
 identical code, have come out at 8.87 s and at 10.53 s, so batch-to-batch
-spread here is about 18%. Our best single run all session was 8.39 s, which
-is still slower than their 7.073 s, so neither caution rescues the result.
+spread here is about 18%. Five runs is too few to state a median: the 8.87 s
+first published here was a lucky batch, and twelve runs put it at 10.1 s.
+Our best single run is 8.45 s, still slower than their 7.073 s, so neither
+caution rescues the result.
 
 The task is theirs, near enough verbatim: "Find one-way flights from Zurich
 to London on ... for one adult in economy", with the date moved forward
@@ -301,11 +303,13 @@ imply. Both measurements start after the first observation.
 Where the time goes, per action, measured: settle 230 ms, observe 28 ms,
 classifier 225 ms, execute 24 ms. Ten actions and four text calls put the
 floor at about 5.4 s with nothing wasted, so the target is not out of reach
-in principle. The distance from 5.4 s to 8.87 s is decisions thrown away
+in principle. The distance from 5.4 s to 10.1 s is decisions thrown away
 because the page changed while the model was answering.
 
-Nine separate attempts to recover them all measured **slower**, and are
-recorded here so they are not tried again:
+Nine separate attempts to recover them measured slower against a five-run
+baseline, and are recorded here. Two of them were later re-tested against a
+twelve-run baseline and kept, marked below: five runs could not tell them
+apart from noise. The rest are not worth retrying.
 
 | attempt | result |
 |---|---|
@@ -313,11 +317,11 @@ recorded here so they are not tried again:
 | Drop the acting frame's marker check in `execute()` | 13.6 s, 4/5 |
 | Compare only the acting frame's marker in `fresh()` | 10.4 s, decisions rose |
 | Ask the classifier during the settle wait, keep the answer if the settled page matches | 10.0 s, 45% of answers usable |
-| Focus the chosen node directly when the click did not | 9.7 s, much wider spread |
+| Focus the chosen node directly when the click did not | **kept**: 10.1 s vs 10.45 s, and 12/12 rather than 11/12 |
 | Require a longer quiet window so fewer decisions go stale | 10.2 s, 4/5 |
 | Abandon a classifier call once the page has moved, watching every frame | 11.9 s, 15 decisions |
 | The same, watching one marker on one frame | 12.3 s, 14 decisions |
-| Remember answers within a run, keyed by the exact request | 9.7 s, decisions rose |
+| Remember answers within a run, keyed by the exact request | **kept**, with the above |
 
 The last three are the interesting failures, because they all worked as
 intended and still lost. A longer quiet window cut decisions from 22 to 18.
@@ -355,7 +359,7 @@ plainly rather than leaving as a get-out. Charging our 22 calls at the
 | | calls | classifier | everything else | total |
 |---|---|---|---|---|
 | jev-ultrafast, reported | 17 | 3.03 s | 4.05 s | **7.07 s** |
-| this library, measured | 22 | 5.00 s | 3.87 s | **8.87 s** |
+| this library, measured | 22 | 5.00 s | 3.87 s | **8.87 s**, one batch of 5 |
 | this library, at their per-call latency | 22 | 3.92 s | 3.87 s | **7.79 s** |
 
 We are ahead on everything that is not the classifier, by 0.18 s. At equal
@@ -372,7 +376,7 @@ consistent with but which has not been confirmed.
 - The classifier finished 25/27 tasks in the 9-journey benchmark; the
   LLM-decides control finished 27/27. You trade some success rate for speed.
   On the seven journeys in `examples/journeys.ts` it now finishes all of
-  them, and on Google Flights all 5 of 5, but both are small samples.
+  them, and on Google Flights 12 of 12, but both are small samples.
 - A task that types text needs a second model. Both it and the classifier are
   network calls, and both can fail.
 - A `DONE` decision is an opinion. Confirm the result from the page.

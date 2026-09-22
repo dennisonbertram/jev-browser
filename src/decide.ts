@@ -228,7 +228,17 @@ async function postTypeSafe(body: unknown): Promise<{
 export async function decide(
   observation: PageObservation,
   goal: string,
-  history: HistoryEntry[]
+  history: HistoryEntry[],
+  /**
+   * Answers already given in this run, keyed by the exact request.
+   *
+   * The classifier is a function of its request: asked the same thing six
+   * times it returned the same operation and target every time, varying
+   * only confidence, 0.960 to 0.980. An identical request therefore costs
+   * about 200 ms and tells us nothing new. A run repeats one about three
+   * times, when a decision is discarded and the page settles back.
+   */
+  cache?: Map<string, Decision>
 ): Promise<Decision> {
   const space = actionSpace(observation.actions);
   const available = operationsFromSpace(space);
@@ -297,6 +307,16 @@ export async function decide(
     questions,
   };
 
+  const cacheKey = cache ? JSON.stringify(body) : "";
+  const remembered = cache?.get(cacheKey);
+  if (remembered)
+    // Reported as free, because it was: no call was made.
+    return {
+      ...remembered,
+      latencyMs: 0,
+      usage: { input_tokens: 0, output_tokens: 0 },
+    };
+
   const start = performance.now();
   const json = await postTypeSafe(body);
   const latencyMs = Math.round(performance.now() - start);
@@ -363,7 +383,7 @@ export async function decide(
     if (candidate) probabilities[candidate.id] = prob;
   }
 
-  return {
+  const decision: Decision = {
     choice: action.id,
     operation,
     target: targetResult.choice,
@@ -372,6 +392,8 @@ export async function decide(
     latencyMs,
     usage,
   };
+  cache?.set(cacheKey, decision);
+  return decision;
 }
 
 /**

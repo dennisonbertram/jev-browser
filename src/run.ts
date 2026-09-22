@@ -90,6 +90,9 @@ export async function run(
   let observation = await observe(context, { screenshot: options.screenshots, diagnostics: false });
   let status: "ready" | "done" | "blocked" = "ready";
   let reason = "the loop ended without a stated reason";
+  // Answers already given in this run. A discarded decision is often
+  // re-asked with a byte-identical request once the page settles back.
+  const answers = new Map<string, Decision>();
   // Keyed by the entire text-helper input, so a generated value survives a
   // stale-page retry only when nothing that produced it changed.
   const pendingText = new Map<string, { value: string; latencyMs: number }>();
@@ -118,7 +121,7 @@ export async function run(
       observation = await observe(context, { screenshot: options.screenshots, diagnostics: false });
     }
 
-    const decision = await decide(observation, goal, history);
+    const decision = await decide(observation, goal, history, answers);
     decisions.push({ ...decision, elapsedMs: since() });
     usage.input_tokens += decision.usage.input_tokens;
     usage.output_tokens += decision.usage.output_tokens;
