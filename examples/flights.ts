@@ -55,6 +55,10 @@ for (let rep = 1; rep <= REPS; rep += 1) {
   const sawZurich = body.includes("zurich") || body.includes("zürich") || url.includes("zrh");
   const sawLondon = body.includes("london") || url.includes("lon");
   const sawFlights = /\b\d{1,2}\s*hr\b|\bnonstop\b|\b1 stop\b/u.test(body);
+  // The upstream run checks the one-way setting and the date too. Checking
+  // less would make "verified" a weaker word here than it is there.
+  const sawOneWay = /one way/iu.test(body) || /\btfs=[^&]*QAE/u.test(url);
+  const sawDate = /nov(ember)?\s*20|20 nov/iu.test(body);
 
   const latencies = result.decisions.map((d) => d.latencyMs);
   console.log(
@@ -72,9 +76,18 @@ for (let rep = 1; rep <= REPS; rep += 1) {
     `  time: classifier ${classifierMs}ms  text ${textMs}ms  browser ${browserMs}ms`
   );
   console.log(
-    `  independent check: zurich=${sawZurich} london=${sawLondon} flight options=${sawFlights}`
+    `  independent check: zurich=${sawZurich} london=${sawLondon} ` +
+      `one-way=${sawOneWay} date=${sawDate} flight options=${sawFlights}`
   );
-  if (result.status === "done" && sawZurich && sawLondon && sawFlights) totals.push(result.elapsedMs);
+  if (
+    result.status === "done" &&
+    sawZurich &&
+    sawLondon &&
+    sawOneWay &&
+    sawDate &&
+    sawFlights
+  )
+    totals.push(result.elapsedMs);
   await context.close();
 }
 

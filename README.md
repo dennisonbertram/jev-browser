@@ -278,8 +278,22 @@ npx tsx examples/flights.ts 5    # one hard journey on Google Flights
   browser. Each run is checked against the finished page, not against the
   agent's own `DONE`.
 
-`jev-ultrafast` reports 7.073 s for the same journey, over 17 decisions at
-178 ms each. We are slower, and the whole difference is classifier time: we
+`jev-ultrafast` reports 7.073 s for this journey. Two cautions about that
+comparison, both of which cut against reading too much into any single
+figure. Their number is **one demonstration run**, which their README says
+plainly; ours is the median of five. And repeated batches of five, on
+identical code, have come out at 8.87 s and at 10.53 s, so batch-to-batch
+spread here is about 18%. Our best single run all session was 8.39 s, which
+is still slower than their 7.073 s, so neither caution rescues the result.
+
+The task is theirs, near enough verbatim: "Find one-way flights from Zurich
+to London on ... for one adult in economy", with the date moved forward
+because theirs has passed. The timing boundary is theirs too, starting after
+the first observation. The independent check now verifies the one-way
+setting and the date as well as the cities and visible flights, matching
+what theirs verifies.
+
+Their run is 17 decisions at We are slower, and the whole difference is classifier time: we
 make 22 calls where they make 17, and each of ours takes about 225 ms from
 this machine. Our browser time, 3.5 s, is below the roughly 4 s their figures
 imply. Both measurements start after the first observation.
