@@ -7,7 +7,7 @@
  * table of nodes this code observed, and the executor re-resolves that node.
  */
 
-type Rect = { x: number; y: number; width: number; height: number };
+export type Rect = { x: number; y: number; width: number; height: number };
 
 /** A frame in the observed tree. `offset` converts frame-local to top-document coordinates. */
 export type FrameRef = {

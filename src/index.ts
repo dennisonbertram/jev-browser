@@ -11,28 +11,62 @@
  * One rule holds everywhere: a model never returns a selector, a coordinate, a
  * file path, a key name, or code. It returns an index into a table this library
  * observed. The library resolves that index and checks it again before acting.
+ *
+ * This file is the whole public surface. Keep it complete and ordered.
  */
 
+// The loop
 export { runOnce } from "./run.ts";
 export type { RunOptions, RunResult } from "./run.ts";
 
+// Observation, decision, execution
 export { observe, fresh, settle } from "./observe.ts";
 export { decide, fieldText } from "./decide.ts";
-export type { HistoryEntry, FieldTextContext } from "./decide.ts";
+export type { FieldTextContext, HistoryEntry } from "./decide.ts";
 export { execute, getActivePage } from "./execute.ts";
 export { actionSpace } from "./actions.ts";
 export type { ActionSpace, SpaceElement } from "./actions.ts";
 
-export { clickInCanvas, screenshotCanvas, screenshotPage } from "./vision.ts";
-export type { Rect, Shot } from "./vision.ts";
-
-export { launchLocal, attachOverCdp } from "./browser.ts";
+// The browser, local or remote
+export { attachOverCdp, launchLocal } from "./browser.ts";
 export type {
   AttachOverCdpOptions,
   BrowserSession,
   LaunchLocalOptions,
 } from "./browser.ts";
 
+// Pictures and coordinates
+export { clickInCanvas, screenshotCanvas, screenshotPage } from "./vision.ts";
+export type { Shot } from "./vision.ts";
+export { screenshotRedacted, secretRegions } from "./redact.ts";
+export type { MaskTarget } from "./redact.ts";
+
+// Credentials
+export { fillCredentials, findCredentialFields } from "./autofill.ts";
+export type { CredentialSource, FillOutcome } from "./autofill.ts";
+
+// Telemetry
+export { createTracer } from "./trace.ts";
+export type { TraceEvent, Tracer } from "./trace.ts";
+
+// State across processes
+export {
+  isSessionState,
+  restoreSessionState,
+  saveSessionState,
+} from "./session-state.ts";
+export type { SessionState } from "./session-state.ts";
+
+// The tool surface a product mounts
+export { createToolHost } from "./tools.ts";
+export type {
+  ToolDefinition,
+  ToolHost,
+  ToolHostOptions,
+  ToolResult,
+} from "./tools.ts";
+
+// Shared types
 export { StalePage } from "./types.ts";
 export type {
   Decision,
@@ -42,13 +76,5 @@ export type {
   ObservedAction,
   Operation,
   PageObservation,
+  Rect,
 } from "./types.ts";
-
-export { screenshotRedacted, secretRegions } from "./redact.ts";
-export type { MaskTarget } from "./redact.ts";
-
-export { fillCredentials, findCredentialFields } from "./autofill.ts";
-export type { CredentialSource, FillOutcome } from "./autofill.ts";
-
-export { createToolHost } from "./tools.ts";
-export type { ToolDefinition, ToolHost, ToolHostOptions, ToolResult } from "./tools.ts";

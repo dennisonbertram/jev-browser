@@ -18,6 +18,19 @@ code. A model returns an index into a table of elements that this library
 observed. The library resolves the index to an element. The library then checks
 the element again, immediately before it sends the input.
 
+## What the library gives you
+
+| Part | What it does |
+| --- | --- |
+| The loop | Observe, decide, write text when needed, execute. One call runs a whole task. |
+| The browser | Start Chromium, or attach to a browser another system owns. |
+| The tool surface | Seven tools with JSON Schemas, for any agent framework to mount. |
+| Pictures | A picture of the page or of one canvas region, and a click inside a region. |
+| Redaction | A picture with the secret regions covered during capture. |
+| Credentials | A login that no model ever sees. |
+| Telemetry | One structured event for each step, with no secret in it. |
+| Session state | Continue a task from a later process against the same browser. |
+
 ## What the library supports
 
 The library reads the complete page, not one document:
@@ -34,6 +47,23 @@ The library reads the complete page, not one document:
 The library counts closed shadow roots through the Chrome DevTools Protocol.
 Page script cannot see a closed root. The library reports the count. It does not
 guess the contents.
+
+## The tools an agent can call
+
+| Tool | What it does |
+| --- | --- |
+| `browser_observe` | Return the numbered table of controls. Call it before any tool that takes an index. |
+| `browser_act` | Click the control at an index, or choose a select option. |
+| `browser_type` | Type caller text into the field at an index. |
+| `browser_login` | Fill the credential fields from the source you supplied. |
+| `browser_screenshot` | Return a picture with the secret regions covered. |
+| `browser_scroll` | Scroll one region, up or down. |
+| `browser_switch_tab` | Make another open tab active. |
+
+No tool accepts a selector, an XPath, a coordinate, or code. An index into the
+last observation is the only way to name an element. See
+[docs/integration.md](docs/integration.md) for the three ways to mount the
+library.
 
 ## Install
 
@@ -68,7 +98,7 @@ probability, and each action with the text that the helper generated.
 ## Run the tests
 
 ```sh
-pnpm run test      # 22 tests, real Chromium, local fixtures, no network
+pnpm run test      # 77 tests, real Chromium, local fixtures, no network
 pnpm run types
 ```
 
@@ -93,6 +123,21 @@ between the first and the third arm is the decision, and nothing else.
 The library also drives a remote browser through the Chrome DevTools Protocol.
 Measured against a Kernel browser: attach 419 ms, and one observation 211 ms.
 
+## What protects you
+
+1. A model never returns a selector, a coordinate, a file path, a key name, or
+   code. It returns an index into a table this library observed.
+2. The library resolves that index to a node, and checks the node again
+   immediately before it sends input. A stale decision is refused, not applied.
+3. A screenshot covers the secret regions during capture. A picture that holds
+   a secret never exists in memory.
+4. A credential value never enters a prompt, a return value, a log, or an error
+   message. An error from your credential source is replaced, because the
+   original can quote the value.
+5. An attached session disconnects. It never closes a browser your product owns.
+6. Session state holds an endpoint, a url and a fingerprint. It holds no element
+   index, no cookie and no secret.
+
 ## Limits
 
 - The classifier declines some tasks that it can complete. In one journey it
@@ -101,8 +146,10 @@ Measured against a Kernel browser: attach 419 ms, and one observation 211 ms.
 - The vendor reports token counts for the classifier. The vendor does not report
   a price. The cost for each task is therefore not known.
 - A `DONE` decision is an opinion. Confirm the result from the page.
-- The fixtures are local. They do not contain a login, a consent banner, a
-  single-page application route change, or bot detection.
+- The fixtures are local. They do not contain a consent banner, a single-page
+  application route change, or bot detection. A login fixture exists.
+- The classifier is one vendor's service. A task that types text also needs a
+  second model. Both are network calls, and both can fail.
 
 ## Credit
 

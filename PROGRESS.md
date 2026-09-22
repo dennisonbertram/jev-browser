@@ -29,6 +29,14 @@ Two facts shape the plan. The engine drives a remote CDP browser unchanged
 (measured against a Kernel browser: attach 419 ms, observe 211 ms). And the
 decision, not the browser layer, is what makes a task fast.
 
+## Proven integrations
+
+| Proof | Where | Result |
+| --- | --- | --- |
+| Out of repo, package install | `/tmp/jev-consumer`, installs the packed tarball | Observes a page it built itself, clicks a button inside an open shadow root, refuses a selector. |
+| Inside the product repository | `poc/jev-drop-in` in the Partyline repository, nested package install | Attaches to a Kernel browser in 281 ms, observes in 133 ms, mounts seven tools, acts by index, saves and restores session state, releases the browser without closing it. |
+| Standalone example | `examples/standalone.ts` | Launches its own browser and drives a fixture through the tool surface. |
+
 ## Subsystems
 
 | # | Subsystem | Why it is needed | State |
@@ -42,7 +50,7 @@ decision, not the browser layer, is what makes a task fast.
 | S6 | Agent tool surface | mount the library in any agent framework | done |
 | S7 | Session state | carry element references across processes | to do |
 | S8 | Hardening | dialogs, downloads, retries, each with a regression test | to do |
-| S9 | Documentation | plain English, accurate, with an integration guide | to do |
+| S9 | Documentation | plain English, accurate, with an integration guide | done |
 
 ## Log
 
@@ -76,3 +84,11 @@ decision, not the browser layer, is what makes a task fast.
   accessible names, nested scroll containers and canvas reporting: everything
   the library exists for. It now goes through observe, actionSpace and execute
   like every other path.
+
+- The public surface is now written by hand and marked as such. An implementer
+  rewrote `src/index.ts` during S6 and dropped the telemetry and session-state
+  exports, so a consumer could not import them. The out-of-repo proof caught it.
+- Documentation: `README.md` covers the whole library, `docs/integration.md`
+  gives the three ways to mount it, and `docs/accessible-names.md` records what
+  the name algorithm does and does not implement. All are in Simplified
+  Technical English.
