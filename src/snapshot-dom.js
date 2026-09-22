@@ -894,9 +894,63 @@
     return "";
   }
 
+  // A name for a control that has none.
+  //
+  // Icon buttons often carry no text and no aria-label: Peek's next-month
+  // arrow is an SVG inside a bare button. With an empty label the classifier
+  // cannot choose it. Developers usually leave a hint in the markup -- a test
+  // id, an integration id, a framework action -- and those read as plain
+  // words once separated. A value that looks generated, such as a hex or
+  // numeric id, says nothing, so it is never used.
+  var HINT_ATTRIBUTES = [
+    "data-testid",
+    "data-test",
+    "data-test-id",
+    "data-qa",
+    "data-cy",
+    "data-integration",
+    "data-action",
+    "phx-click",
+    "name",
+    "id",
+  ];
+
+  function humanizeHint(raw) {
+    var words = String(raw)
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .split(/[^A-Za-z0-9]+/)
+      .filter(function (w) {
+        return w.length > 0;
+      });
+    // A generated value: a run of hex or digits, or no real word in it.
+    for (var i = 0; i < words.length; i++) {
+      if (/^[0-9a-f]{6,}$/i.test(words[i]) && /[0-9]/.test(words[i]))
+        return "";
+    }
+    var real = words.filter(function (w) {
+      return /^[A-Za-z]{3,}$/.test(w);
+    });
+    if (real.length === 0) return "";
+    var text = words.join(" ").toLowerCase();
+    return text.length > 40 ? "" : text;
+  }
+
+  function hintName(el) {
+    var svgTitle = el.querySelector && el.querySelector("svg title");
+    if (svgTitle && svgTitle.textContent && svgTitle.textContent.trim())
+      return clampName(svgTitle.textContent.trim());
+    for (var i = 0; i < HINT_ATTRIBUTES.length; i++) {
+      var value = el.getAttribute && el.getAttribute(HINT_ATTRIBUTES[i]);
+      if (!value) continue;
+      var hint = humanizeHint(value);
+      if (hint) return hint;
+    }
+    return "";
+  }
+
   function addAction(el, ctx, kind, extra) {
     if (isCollapsed(el, kind)) return;
-    var name = accessibleName(el);
+    var name = accessibleName(el) || hintName(el);
     if (
       !name &&
       kind === "click" &&

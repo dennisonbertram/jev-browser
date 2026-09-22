@@ -72,3 +72,90 @@ describe("the run loop", () => {
     expect(steps).toHaveLength(3);
   }, 60_000);
 });
+
+describe("a browser that stops responding", () => {
+  it("ends the run quickly instead of waiting for ever", async () => {
+    // The click starts an endless loop on the page's main thread, so every
+    // later browser call waits for a renderer that never answers. On Kernel
+    // this happened on two real sites and held a run for eight minutes.
+    stubModels("");
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(
+      '<button onclick="for (;;) {}">Start the long job</button>'
+    );
+
+    const started = Date.now();
+    const result = await run(page, {
+      goal: "start the long job",
+      browserTimeoutMs: 2_000,
+    });
+    const took = Date.now() - started;
+    await context.close().catch(() => undefined);
+
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toBe("the browser stopped responding");
+    // One click, then one bounded wait. Far under the old eight minutes.
+    expect(took).toBeLessThan(10_000);
+  }, 30_000);
+});
+
+describe("failing fast", () => {
+  it("waits for a page that has not rendered its controls yet", async () => {
+    stubModels("");
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(`<div id="app"></div><script>
+      setTimeout(() => {
+        document.getElementById("app").innerHTML =
+          '<button onclick="document.title=\\'clicked\\'">Continue</button>';
+      }, 1200);
+    </script>`);
+
+    const result = await run(page, { goal: "continue" });
+    const title = await page.title();
+    await context.close();
+
+    // It saw the button once it appeared, instead of deciding on a blank page.
+    expect(result.history.length).toBeGreaterThan(0);
+    expect(title).toBe("clicked");
+  }, 30_000);
+
+  it("gives up without a model call on a page that never offers anything", async () => {
+    stubModels("");
+    let calls = 0;
+    const counted = globalThis.fetch;
+    globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
+      calls += 1;
+      return counted(...args);
+    }) as typeof fetch;
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent("<p>Nothing here to press.</p>");
+
+    const result = await run(page, { goal: "book a table" });
+    await context.close();
+
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toBe("the page has nothing to act on");
+    expect(calls).toBe(0);
+  }, 30_000);
+
+  it("stops when it keeps toggling the same control", async () => {
+    stubModels("");
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    // A disclosure that opens and closes on each click: every click changes
+    // the page, so the no-progress rule alone never fires.
+    await page.setContent(`<button onclick="
+        const p = document.getElementById('panel'); p.hidden = !p.hidden;
+      ">Select a date</button><div id="panel" hidden>September</div>`);
+
+    const result = await run(page, { goal: "pick a date next month" });
+    await context.close();
+
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toBe("the run went back and forth without progress");
+    expect(result.history.length).toBeLessThanOrEqual(5);
+  }, 30_000);
+});

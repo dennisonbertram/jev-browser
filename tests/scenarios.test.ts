@@ -546,3 +546,27 @@ describe("settling after an action", () => {
     }
   });
 });
+
+describe("icon buttons with no accessible name", () => {
+  it("are named from the hints their markup carries, never from noise", async () => {
+    // Peek's next-month arrow is exactly this: an SVG inside a button, no
+    // text and no aria-label, so a classifier could not choose it.
+    const icon = '<svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16"><path d="m8 4 8 8-8 8"/></svg>';
+    const { context, page } = await pageWith(`
+      <button data-integration="next-month">${icon}</button>
+      <button title="Close dialog">${icon}</button>
+      <button data-testid="cartIncrement">${icon}</button>
+      <button id="a9f3c2e17b40">${icon}</button>
+    `);
+    const labels = (await observe(context)).actions
+      .filter((a) => a.kind === "click")
+      .map((a) => a.label);
+    await context.close();
+
+    expect(labels).toContain("next month");
+    expect(labels).toContain("Close dialog");
+    expect(labels).toContain("cart increment");
+    // A generated identifier says nothing; it must not pose as a name.
+    expect(labels.some((label) => /a9f3c2e17b40/.test(label))).toBe(false);
+  });
+});
