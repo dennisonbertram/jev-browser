@@ -95,6 +95,11 @@ export async function run(
   // times with nothing in history and no strike against the stuck rule.
   const MAX_STALE_RETRIES = 3;
   let staleRetries = 0;
+  // An empty text answer skips the action, so it never reaches history and the
+  // no-progress rule cannot see it. Unbounded, the classifier chose the same
+  // field six times in a row on a real page.
+  const MAX_EMPTY_TEXT = 3;
+  let emptyText = 0;
   const startedAt = performance.now();
   const since = () => Math.round(performance.now() - startedAt);
   const usage = { input_tokens: 0, output_tokens: 0, text_calls: 0 };
@@ -168,6 +173,11 @@ export async function run(
           text = generated.value;
           textLatencyMs = generated.latencyMs;
           if (text === "") {
+            emptyText += 1;
+            if (emptyText > MAX_EMPTY_TEXT) {
+              status = "blocked";
+              break;
+            }
             // The text model had no value for this field. Typing nothing
             // would look like progress and loop; observe again and let the
             // classifier choose something else. The stuck rule bounds this.
