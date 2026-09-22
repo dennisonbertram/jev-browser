@@ -264,7 +264,11 @@ export async function run(
     // Recorded before observing: a stale post-action read must not erase it.
     history.push(entry);
 
-    await settle(activePage(context), action);
+    await settle(
+      activePage(context),
+      action,
+      action.ref ? before.markers[action.ref.frameId] : undefined
+    );
     observation = await observe(context, { screenshot: options.screenshots });
     entry.pageChanged = observation.fingerprint !== before.fingerprint;
     entry.url = observation.url;

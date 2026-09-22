@@ -450,8 +450,9 @@ export async function fresh(
  * landed 107 to 209 ms later, and the decision taken in between was already
  * stale when it executed.
  *
- * A page whose token never moves costs `reactMs`. One that never stops costs
- * `capMs`. A page that reacts and settles costs however long that takes.
+ * `expected` is the token the decision was made from. A page whose token
+ * never moves costs `reactMs`. One that never stops costs `capMs`. A page
+ * that reacts and settles costs however long that takes.
  *
  * The body below declares no named functions on purpose. The bundler adds a
  * `__name` helper to those, the helper does not exist in the page, and the
@@ -460,13 +461,14 @@ export async function fresh(
  */
 async function domQuiet(
   frame: Frame,
+  expected: string | undefined,
   reactMs = 350,
   capMs = 900
 ): Promise<void> {
   await Promise.race([
     frame
       .evaluate(
-        ([react, cap]) =>
+        ([react, cap, before]) =>
           new Promise<void>((resolve) => {
             const jev = (
               window as unknown as { __jevFast?: { marker(): string } }
@@ -475,7 +477,12 @@ async function domQuiet(
             const started = performance.now();
             let last = jev.marker();
             let stable = 0;
-            let changed = false;
+            // The page often reacts while the action is still executing, so
+            // by the time this starts the change has already happened.
+            // Comparing against the marker the decision was made from sees
+            // that, where comparing against the marker now does not: every
+            // action on a simple page paid the whole no-reaction wait.
+            let changed = typeof before === "string" && last !== before;
             const id = setInterval(() => {
               const waited = performance.now() - started;
               const now = jev.marker();
@@ -494,7 +501,7 @@ async function domQuiet(
               }
             }, 32);
           }),
-        [reactMs, capMs] as const
+        [reactMs, capMs, expected] as const
       )
       .catch(() => {}),
     new Promise((resolve) => setTimeout(resolve, capMs + 100)),
@@ -537,7 +544,9 @@ async function pollComboboxOptions(
 
 export async function settle(
   page: Page,
-  action: ObservedAction
+  action: ObservedAction,
+  /** The acting frame's marker when the decision was made, if you have it. */
+  expectedMarker?: string
 ): Promise<void> {
   // The node number belongs to the action's own frame's registry. Resolving it
   // against the top document watched an unrelated element, or the top window.
@@ -595,7 +604,11 @@ export async function settle(
       const waited = await pollComboboxOptions(frame, action.ref.node);
       if (waited !== null) return;
     }
-    await domQuiet(frame);
+    // A click can navigate or open something, so it is worth waiting for a
+    // page that has not reacted yet. Typing into a plain field usually does
+    // nothing until it is submitted, and the one reaction that matters, a
+    // suggestion list, is already handled above.
+    await domQuiet(frame, expectedMarker, action.kind === "fill" ? 150 : 350);
   } catch {
     // never throw out of settle()
   }
