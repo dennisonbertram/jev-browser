@@ -16,13 +16,13 @@
  */
 
 // The loop
-export { runOnce } from "./run.ts";
-export type { RunOptions, RunResult } from "./run.ts";
+export { run, runOnce } from "./run.ts";
+export type { HistoryEntry as RunStep, RunOptions, RunResult } from "./run.ts";
 
 // Observation, decision, execution
 export { observe, fresh, settle } from "./observe.ts";
 export { decide, fieldText } from "./decide.ts";
-export type { FieldTextContext, HistoryEntry } from "./decide.ts";
+export type { FieldTextContext } from "./decide.ts";
 export { execute, getActivePage } from "./execute.ts";
 export { actionSpace } from "./actions.ts";
 export type { ActionSpace, SpaceElement } from "./actions.ts";

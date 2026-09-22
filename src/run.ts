@@ -23,7 +23,7 @@ import {
 const MAX_ACTIONS = 30;
 const MAX_DECISIONS = MAX_ACTIONS * 2;
 
-type HistoryEntry = {
+export type HistoryEntry = {
   step: number;
   action: string;
   kind: ObservedAction["kind"];
@@ -63,8 +63,15 @@ export type RunOptions = {
   onStep?: (entry: HistoryEntry) => void;
 };
 
-/** The loop. runOnce() is the PoC's outside surface; this is its body. */
-async function run(
+/**
+ * Run a whole task against a context you already have: observe, decide, write
+ * text when the operation needs it, execute, and repeat until the classifier
+ * stops or a bound trips.
+ *
+ * Use this when your product owns the browser. `runOnce` is the same loop with
+ * a context of its own.
+ */
+export async function run(
   context: BrowserContext,
   options: RunOptions
 ): Promise<RunResult> {
