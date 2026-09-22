@@ -28,6 +28,8 @@ const files = (flag("files") ?? "").split(",").map((f) => f.trim()).filter(Boole
 const verify = flag("verify", "npx vitest run");
 const rounds = Number(flag("rounds", "3"));
 const model = flag("model", process.env.IMPL_MODEL ?? "meta/muse-spark-1.3");
+// A retry should not start blind: pass the failures the last run left behind.
+const notes = flag("notes");
 if (!specPath || files.length === 0) {
   console.error("Usage: --spec <file> --files a.ts,b.ts [--verify <cmd>] [--rounds N] [--model id]");
   process.exit(2);
@@ -68,7 +70,7 @@ const run = (command) => {
   }
 };
 
-let failure = "";
+let failure = notes ? `Known problems in the current files, from the last run:\n\n${notes}` : "";
 for (let round = 1; round <= rounds; round += 1) {
   const current = files
     .map((file) => `<file path="${file}">\n${existsSync(file) ? readFileSync(file, "utf8") : "(does not exist yet)"}\n</file>`)

@@ -43,3 +43,6 @@ export type {
   Operation,
   PageObservation,
 } from "./types.ts";
+
+export { screenshotRedacted, secretRegions } from "./redact.ts";
+export type { MaskTarget } from "./redact.ts";
