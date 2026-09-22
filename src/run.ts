@@ -95,9 +95,9 @@ export async function run(
   // times with nothing in history and no strike against the stuck rule.
   const MAX_STALE_RETRIES = 3;
   let staleRetries = 0;
-  // An empty text answer skips the action, so it never reaches history and the
-  // no-progress rule cannot see it. Unbounded, the classifier chose the same
-  // field six times in a row on a real page.
+  // An empty text answer abandons the action. The attempt is still recorded,
+  // so the no-progress rule and the classifier's recent_actions can both see
+  // it, but the count is bounded as well.
   const MAX_EMPTY_TEXT = 3;
   let emptyText = 0;
   const startedAt = performance.now();
@@ -178,10 +178,11 @@ export async function run(
               status = "blocked";
               break;
             }
-            // The text model had no value for this field. Typing nothing
-            // would look like progress and loop; observe again and let the
-            // classifier choose something else. The stuck rule bounds this.
-            options.onStep?.({
+            // Record the attempt. recent_actions is how the classifier learns
+            // what already failed, and a path that skips history leaves it
+            // choosing the same field for ever: on a real page it chose the
+            // same one twenty times at confidence 1.00.
+            const barren: HistoryEntry = {
               step: history.length + 1,
               action: action.label,
               kind: action.kind,
@@ -197,7 +198,9 @@ export async function run(
               url: observation.url,
               elapsedMs: since(),
               usage: decision.usage,
-            });
+            };
+            history.push(barren);
+            options.onStep?.(barren);
             observation = await observe(context, { screenshot: options.screenshots });
             continue;
           }
