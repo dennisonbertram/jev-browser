@@ -4,7 +4,12 @@
  * sets for the speculative target heads (targets), and the no-target
  * operations (controls). Pure, deterministic, no I/O.
  */
-import type { NodeRef, ObservedAction, Operation } from "./types.ts";
+import type {
+  NodeRef,
+  ObservedAction,
+  Operation,
+  PageObservation,
+} from "./types.ts";
 
 type SpaceOption = {
   index: string;
@@ -59,7 +64,16 @@ type NodeEntry = {
 
 type ScrollGroup = { up?: ObservedAction; down?: ObservedAction };
 
-export function actionSpace(actions: ObservedAction[]): ActionSpace {
+/**
+ * The numbered table for an observation.
+ *
+ * Takes the observation itself or just its actions. The action array alone was
+ * the only accepted form, and callers kept passing the observation.
+ */
+export function actionSpace(
+  source: PageObservation | ObservedAction[]
+): ActionSpace {
+  const actions = Array.isArray(source) ? source : source.actions;
   const nodeOrder: string[] = [];
   const nodes = new Map<string, NodeEntry>();
   const scrollOrder: string[] = [];

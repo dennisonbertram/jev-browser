@@ -6,6 +6,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { contextOf, type BrowserTarget } from "./target.ts";
 import type { BrowserContext, Frame, Page } from "playwright";
 import { StalePage } from "./types.ts";
 import type { NodeRef, ObservedAction, PageObservation } from "./types.ts";
@@ -292,11 +293,12 @@ async function pickUploadFile(dir: string): Promise<string> {
 }
 
 export async function execute(
-  context: BrowserContext,
+  target: BrowserTarget,
   observation: PageObservation,
   action: ObservedAction,
   opts: { text?: string; uploadDir?: string } = {}
 ): Promise<{ executed: string }> {
+  const context = contextOf(target);
   // The action must be one this observation offered. Without this check a
   // caller could build an action by hand, keeping valid frame evidence while
   // changing the key, the delta or the scroll point.

@@ -66,6 +66,9 @@ export type {
   ToolResult,
 } from "./tools.ts";
 
+// A context, or any page inside one: every entry point takes either.
+export type { BrowserTarget } from "./target.ts";
+
 // Shared types
 export { StalePage } from "./types.ts";
 export type {

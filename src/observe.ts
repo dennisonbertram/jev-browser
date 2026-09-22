@@ -5,6 +5,7 @@
 // being resolved and executed) we never re-run it, so the node indices and
 // guards a frame handed out stay valid until the next observe(). fresh()
 // re-checks those same indices in place; it never re-snapshots.
+import { contextOf, type BrowserTarget } from "./target.ts";
 import type { BrowserContext, Frame, Page } from "playwright";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -201,9 +202,10 @@ function fingerprint(
 }
 
 export async function observe(
-  context: BrowserContext,
+  target: BrowserTarget,
   opts?: { screenshot?: boolean }
 ): Promise<PageObservation> {
+  const context = contextOf(target);
   const src = readFileSync(SNAPSHOT_PATH, "utf8");
   const pages = trackPages(context);
   const active = await pickActive(pages, getActivePage(context));
@@ -382,10 +384,11 @@ export async function observe(
 }
 
 export async function fresh(
-  context: BrowserContext,
+  target: BrowserTarget,
   observation: PageObservation,
   action?: ObservedAction
 ): Promise<boolean> {
+  const context = contextOf(target);
   try {
     // A tab appearing or closing changes what is possible, so a decision made
     // before it cannot be accepted after it -- including a DONE or BLOCKED.

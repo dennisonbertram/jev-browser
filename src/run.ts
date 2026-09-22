@@ -8,6 +8,7 @@
  * post-action observation, so a stale read cannot erase it.
  */
 import { readdirSync } from "node:fs";
+import { contextOf, type BrowserTarget } from "./target.ts";
 import type { Browser, BrowserContext, Page } from "playwright";
 import { actionSpace } from "./actions.ts";
 import { decide, fieldText } from "./decide.ts";
@@ -72,9 +73,10 @@ export type RunOptions = {
  * a context of its own.
  */
 export async function run(
-  context: BrowserContext,
+  target: BrowserTarget,
   options: RunOptions
 ): Promise<RunResult> {
+  const context = contextOf(target);
   const goal = options.goal.trim();
   if (!goal) throw new Error("Supply a goal");
   const uploadDir = options.uploadDir;

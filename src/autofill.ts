@@ -1,3 +1,4 @@
+import { contextOf, type BrowserTarget } from "./target.ts";
 import type { BrowserContext } from "playwright";
 import { execute } from "./execute.ts";
 import type { NodeRef, PageObservation } from "./types.ts";
@@ -144,9 +145,10 @@ function classify(info: FieldInfo): CredentialKind | null {
 }
 
 export async function findCredentialFields(
-  context: BrowserContext,
+  target: BrowserTarget,
   observation: PageObservation,
 ): Promise<{ kind: CredentialKind; ref: NodeRef }[]> {
+  const context = contextOf(target);
   const fields: { kind: CredentialKind; ref: NodeRef }[] = [];
   // One entry per node: a node can carry more than one action.
   const seen = new Set<string>();
@@ -171,10 +173,11 @@ export async function findCredentialFields(
 
 
 export async function fillCredentials(
-  context: BrowserContext,
+  target: BrowserTarget,
   observation: PageObservation,
   source: CredentialSource,
 ): Promise<FillOutcome> {
+  const context = contextOf(target);
   const fields = await findCredentialFields(context, observation);
   const outcome: FillOutcome = {
     filled: [],

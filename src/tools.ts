@@ -13,6 +13,7 @@
  */
 import type { BrowserContext } from "playwright";
 import { actionSpace, type ActionSpace } from "./actions.ts";
+import { contextOf, type BrowserTarget } from "./target.ts";
 import { fillCredentials, type CredentialSource } from "./autofill.ts";
 import { execute, getActivePage } from "./execute.ts";
 import { observe } from "./observe.ts";
@@ -39,7 +40,8 @@ export type ToolHost = {
 };
 
 export type ToolHostOptions = {
-  context: BrowserContext;
+  /** A context, or any page inside one. */
+  context: BrowserTarget;
   credentials?: CredentialSource;
   tracer?: Tracer;
   uploadDir?: string;
@@ -200,7 +202,8 @@ function renderTable(space: ActionSpace, observation: PageObservation): string {
     : text;
 }
 
-export function createToolHost(options: ToolHostOptions): ToolHost {
+export function createToolHost(rawOptions: ToolHostOptions): ToolHost {
+  const options = { ...rawOptions, context: contextOf(rawOptions.context) };
   // The latest observation. An index means nothing without it.
   let observation: PageObservation | null = null;
   let space: ActionSpace | null = null;
