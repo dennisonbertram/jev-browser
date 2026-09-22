@@ -92,3 +92,38 @@ decision, not the browser layer, is what makes a task fast.
   gives the three ways to mount it, and `docs/accessible-names.md` records what
   the name algorithm does and does not implement. All are in Simplified
   Technical English.
+
+## The production review, and what it found
+
+A review of the whole library (`gpt-6-astra`, high effort) found two critical
+defects, each of which falsified a documented guarantee. A probe confirmed both
+before either was fixed.
+
+1. **A secret reached the model.** Every fill action copied the field's value,
+   including a password input. After a login, `browser_observe` rendered the
+   password and the classifier request carried it. Fixed at the source: the
+   snapshot marks such a field sensitive and reports a character count.
+2. **Redaction covered nothing on a real page.** The redactor searched for frame
+   collections a real observation does not have, so `secretRegions` returned an
+   empty list and a screenshot captured the secret. The redaction tests had
+   concealed it by building observation-shaped objects by hand. Both the module
+   and the tests now use the real contract.
+
+Also fixed: a newline typed through `browser_type` became Enter; the screenshot
+tool discarded its image; telemetry emitted observations only; an upload without
+a directory fell back to one inside the library; two model calls had no
+deadline; and `execute` trusted an action a caller built by hand.
+
+## Known limits, not defects
+
+- `screenshotPage` and `screenshotCanvas` do not redact. They are for a page you
+  know to be safe. `browser_screenshot` is the redacted path.
+- `BrowserSession`, `getActivePage` and the exported parts hand back Playwright
+  objects. They are a trusted-host surface for the product, not a boundary
+  against a model. The boundary is the tool surface.
+- `clickInCanvas` takes a fraction of an observed region. That is a bounded
+  coordinate by design, and the only way to reach a control with no DOM node.
+- A page evaluation has no deadline of its own. A page that suspends animation
+  frames can hold `settle` or a scroll until the caller's own timeout.
+- Session state carries a url, and a url can carry a token. Treat the state as
+  sensitive.

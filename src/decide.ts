@@ -35,6 +35,9 @@ const TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone";
  * The text helper speaks the OpenAI chat-completions protocol. Point
  * TEXT_MODEL_BASE_URL at any endpoint that does the same.
  */
+/** No model call waits for ever. A stalled response used to hold a whole run. */
+const REQUEST_TIMEOUT_MS = Number(process.env.JEV_REQUEST_TIMEOUT_MS ?? 60_000);
+
 const TEXT_BASE_URL = (process.env.TEXT_MODEL_BASE_URL ?? "https://api.openai.com/v1").replace(/\/+$/u, "");
 const TEXT_URL = `${TEXT_BASE_URL}/chat/completions`;
 const RETRY_STATUSES = new Set([429, 503, 529]);
@@ -202,7 +205,8 @@ async function postTypeSafe(body: unknown): Promise<{
         authorization: `Bearer ${key}`,
       },
       body: JSON.stringify(body),
-    });
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
     if (res.ok) return res.json();
     if (RETRY_STATUSES.has(res.status) && attempt < RETRY_BACKOFFS_MS.length) {
       await new Promise((r) => setTimeout(r, RETRY_BACKOFFS_MS[attempt]));
@@ -396,12 +400,14 @@ export async function fieldText(
         { role: "user", content: JSON.stringify(context) },
       ],
     }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const latencyMs = Math.round(performance.now() - start);
-  if (!res.ok)
-    throw new Error(
-      `Text gateway request failed: ${res.status} ${await res.text()}`
-    );
+  if (!res.ok) {
+    // The status only. A response body can echo the request, and the request
+    // carries the page text and the field this value is for.
+    throw new Error(`Text gateway request failed with status ${res.status}`);
+  }
   const json = await res.json();
   const raw = json?.choices?.[0]?.message?.content;
   if (typeof raw !== "string")

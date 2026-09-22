@@ -297,6 +297,14 @@ export async function execute(
   action: ObservedAction,
   opts: { text?: string; uploadDir?: string } = {}
 ): Promise<{ executed: string }> {
+  // The action must be one this observation offered. Without this check a
+  // caller could build an action by hand, keeping valid frame evidence while
+  // changing the key, the delta or the scroll point.
+  if (!observation.actions.some((candidate) => candidate === action || candidate.id === action.id)) {
+    throw new Error(
+      `Action ${action.id} is not part of this observation. Observe again and choose from the result.`
+    );
+  }
   switch (action.kind) {
     case "click": {
       const ref = requireRef(action);
