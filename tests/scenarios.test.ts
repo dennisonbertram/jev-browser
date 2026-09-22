@@ -17,6 +17,7 @@ import {
   fillCredentials,
   observe,
   screenshotRedacted,
+  settle,
   secretRegions,
   type ObservedAction,
   type PageObservation,
@@ -72,7 +73,7 @@ async function actOn(
 }
 
 describe("1. a consent banner covering the page", () => {
-  it("refuses the covered link, then follows it once the banner is gone", async () => {
+  it("hides the covered link, then follows it once the banner is gone", async () => {
     const { context, page } = await pageWith(`
       <main><a id="go" href="#done">Continue to the destination</a>
       <p id="result">not yet</p></main>
@@ -85,11 +86,13 @@ describe("1. a consent banner covering the page", () => {
         };
       </script>`);
     try {
+      // The link is under the banner, so it is not a target at all. Offering
+      // it and refusing it later costs the caller a turn on an action that
+      // could never work.
       const covered = await observe(page);
-      // The link is under the banner, so acting on it must be refused.
-      await expect(
-        execute(page, covered, byLabel(covered, "click", "Continue to the destination"))
-      ).rejects.toThrow();
+      expect(covered.actions.map((a) => a.label)).not.toContain(
+        "Continue to the destination"
+      );
       expect(await page.locator("#result").textContent()).toBe("not yet");
 
       await actOn(page, "click", "Accept cookies");
@@ -511,5 +514,35 @@ describe("a collapsed panel", () => {
     expect(labels).not.toContain("Where else?");
     expect(labels).not.toContain("Add airport");
     expect(labels).not.toContain("Ghost");
+  });
+});
+
+describe("settling after an action", () => {
+  it("waits for work the click starts later, not just for the click", async () => {
+    // A click that toggles a class at once and rebuilds the page 200 ms
+    // later. Anything that waits only for the immediate change returns
+    // before the rebuild, and the next observation describes a page that
+    // never existed for the person.
+    const { context, page } = await pageWith(`
+      <button id="go">Start</button><div id="panel"></div>
+      <script>
+        document.getElementById("go").onclick = () => {
+          document.body.classList.add("busy");
+          setTimeout(() => {
+            document.getElementById("panel").innerHTML =
+              '<label>City <input id="city"></label>';
+          }, 200);
+        };
+      </script>`);
+    try {
+      const before = await observe(page);
+      const go = byLabel(before, "click", "Start");
+      await execute(page, before, go);
+      await settle(page, go);
+      const after = await observe(page);
+      expect(after.actions.map((a) => a.label)).toContain("City");
+    } finally {
+      await context.close();
+    }
   });
 });

@@ -660,10 +660,14 @@
     walkNode(doc.body || doc.documentElement, ctx);
   }
 
+  // aria-hidden deliberately does not prune here. It is bookkeeping, and real
+  // pages leave it behind: Google Flights keeps aria-hidden="true" on its
+  // search form after the trip-type menu closes, which dropped 70 of 84
+  // actions from a page that was fully painted. Whether a person can act on
+  // an element is decided by paint and by the hit test, in filterUnreachable.
   function walkNode(el, ctx) {
     if (!el) return;
     if (el.nodeType !== 1) return;
-    if (el.getAttribute && el.getAttribute("aria-hidden") === "true") return;
     var cs = getComputedStyleSafe(el);
     if (cs && cs.display === "none") return;
 
@@ -856,6 +860,40 @@
     return isVisibilityHidden(el);
   }
 
+  // The name of the section a control sits in.
+  //
+  // A control's own name is often too local to act on. Google Flights names
+  // its origin field "Where else?", which says nothing about origin, and
+  // every text model asked to fill it answered with nothing or with the
+  // wrong city. The enclosing dialog is named "Enter your origin".
+  //
+  // Only a dialog or an explicitly named group counts. A wrapper named after
+  // the whole page adds noise, not context.
+  function groupName(el) {
+    var node = el.parentElement;
+    var hops = 0;
+    while (node && hops < 12) {
+      var role = node.getAttribute && node.getAttribute("role");
+      var tag = node.tagName;
+      if (role === "dialog" || role === "alertdialog" || tag === "DIALOG") {
+        var name = accessibleName(node);
+        if (name) return name;
+      }
+      if (
+        node.getAttribute &&
+        (node.getAttribute("aria-label") ||
+          node.getAttribute("aria-labelledby")) &&
+        (role === "group" || role === "region" || tag === "FIELDSET")
+      ) {
+        var groupLabel = accessibleName(node);
+        if (groupLabel) return groupLabel;
+      }
+      node = node.parentElement;
+      hops++;
+    }
+    return "";
+  }
+
   function addAction(el, ctx, kind, extra) {
     if (isCollapsed(el, kind)) return;
     var name = accessibleName(el);
@@ -889,6 +927,8 @@
       action.currentValue = picked;
     }
     if (kind === "fill") {
+      var group = groupName(el);
+      if (group && group !== name) action.group = group;
       // A field that holds a secret by its own nature never gives up its
       // value. The value used to be copied here, so it reached the numbered
       // table a model reads and the classifier request. Only the length
@@ -1093,7 +1133,7 @@
     return false;
   }
 
-  function filterClipped(ctx) {
+  function filterUnreachable(ctx) {
     ctx.actions = ctx.actions.filter(function (action) {
       if (!action.ref) return true;
       var el = nodes.get(action.ref.node);
@@ -1101,7 +1141,11 @@
       // A file input is exempt: sites routinely collapse it and drive it from
       // a styled label, and it is still the only way to attach a file.
       if (action.kind === "upload") return true;
-      return !isClippedAway(el);
+      if (isClippedAway(el)) return false;
+      // The centre of the element must reach the element. This is what
+      // removes a menu that has faded out but is still laid out, and
+      // anything behind an overlay or a modal.
+      return hitFor(action.ref.node) !== null;
     });
   }
 
@@ -1135,7 +1179,7 @@
         });
       }
 
-      filterClipped(ctx);
+      filterUnreachable(ctx);
       addPressActions(doc, ctx);
 
       // Derived from the observed controls, so it covers shadow roots and

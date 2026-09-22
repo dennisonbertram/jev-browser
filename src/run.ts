@@ -96,7 +96,7 @@ export async function run(
   // A stale retry re-runs the whole action, including any input it already
   // dispatched before going stale. Unbounded, that clicked the same field 60
   // times with nothing in history and no strike against the stuck rule.
-  const MAX_STALE_RETRIES = 3;
+  const MAX_STALE_RETRIES = 8;
   let staleRetries = 0;
   // An empty text answer abandons the action. The attempt is still recorded,
   // so the no-progress rule and the classifier's recent_actions can both see
@@ -168,6 +168,10 @@ export async function run(
               label: action.label,
               role: action.role,
               value: action.currentValue ?? action.value,
+              // The field's own name is sometimes too local to act on. The
+              // dialog around it carries the rest: Google Flights names its
+              // origin field "Where else?" inside "Enter your origin".
+              group: action.group,
             },
             page: {
               title: observation.title,
@@ -267,6 +271,7 @@ export async function run(
     const stuck =
       recent.length === 3 &&
       recent.every((h) => h.pageChanged === false && h.kind !== "wait");
+    if (stuck) reason = "three actions in a row changed nothing on the page";
     status = stuck ? "blocked" : "ready";
   }
 

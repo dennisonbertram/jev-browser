@@ -441,48 +441,60 @@ export async function fresh(
 }
 
 /**
- * Waits until the document stops changing, then returns.
+ * Waits until the page's freshness token stops changing.
  *
- * Two animation frames used to be the whole wait after a click. That is about
- * 32 ms, and a page that rebuilds a section takes longer: on Google Flights
- * the next observation of the trip-type change saw no fields at all, and the
- * run chose from what little was left.
+ * The token is the same one `fresh()` compares, so this waits for exactly the
+ * thing that otherwise invalidates the next decision. An earlier version
+ * waited two animation frames, about 32 ms, and a click on Google Flights
+ * first toggles a class and only then starts the work: the real re-render
+ * landed 107 to 209 ms later, and the decision taken in between was already
+ * stale when it executed.
  *
- * The wait is for two consecutive frames with no mutation, so a page that is
- * already still costs the same 32 ms as before. `capMs` bounds a page that
- * never stops, such as one with a spinner or a clock.
+ * A page whose token never moves costs `reactMs`. One that never stops costs
+ * `capMs`. A page that reacts and settles costs however long that takes.
+ *
+ * The body below declares no named functions on purpose. The bundler adds a
+ * `__name` helper to those, the helper does not exist in the page, and the
+ * resulting ReferenceError went into settle's catch: every version of this
+ * wait returned in 6 ms without ever running.
  */
-async function domQuiet(frame: Frame, capMs = 600): Promise<void> {
+async function domQuiet(
+  frame: Frame,
+  reactMs = 350,
+  capMs = 900
+): Promise<void> {
   await Promise.race([
     frame
       .evaluate(
-        (cap) =>
+        ([react, cap]) =>
           new Promise<void>((resolve) => {
-            let dirty = 0;
-            const observer = new MutationObserver(() => {
-              dirty += 1;
-            });
-            observer.observe(document, {
-              subtree: true,
-              childList: true,
-              attributes: true,
-              characterData: true,
-            });
-            const deadline = performance.now() + cap;
-            let quiet = 0;
-            const done = () => {
-              observer.disconnect();
-              resolve();
-            };
-            const tick = () => {
-              quiet = dirty === 0 ? quiet + 1 : 0;
-              dirty = 0;
-              if (quiet >= 2 || performance.now() > deadline) done();
-              else requestAnimationFrame(tick);
-            };
-            requestAnimationFrame(tick);
+            const jev = (
+              window as unknown as { __jevFast?: { marker(): string } }
+            ).__jevFast;
+            if (!jev) return resolve();
+            const started = performance.now();
+            let last = jev.marker();
+            let stable = 0;
+            let changed = false;
+            const id = setInterval(() => {
+              const waited = performance.now() - started;
+              const now = jev.marker();
+              if (now === last) stable += 1;
+              else {
+                stable = 0;
+                changed = true;
+                last = now;
+              }
+              if (
+                (stable >= 2 && (changed || waited > react)) ||
+                waited > cap
+              ) {
+                clearInterval(id);
+                resolve();
+              }
+            }, 32);
           }),
-        capMs
+        [reactMs, capMs] as const
       )
       .catch(() => {}),
     new Promise((resolve) => setTimeout(resolve, capMs + 100)),

@@ -54,6 +54,8 @@ export type ObservedAction = {
   role?: string;
   value?: string;
   currentValue?: string;
+  /** The name of the enclosing dialog or named group, when it adds to the label. */
+  group?: string;
   checked?: boolean;
   selected?: boolean;
   expanded?: boolean;
