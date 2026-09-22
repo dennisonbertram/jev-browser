@@ -284,12 +284,36 @@ make 22 calls where they make 17, and each of ours takes about 225 ms from
 this machine. Our browser time, 3.5 s, is below the roughly 4 s their figures
 imply. Both measurements start after the first observation.
 
-Cutting the extra calls is the obvious remaining win and is harder than it
-looks. Most of them are decisions thrown away because the page changed while
-the model was answering. Three separate attempts to keep those decisions, by
-relaxing what counts as a stale page, each made the whole run slower: the
-agent acted on a page that had moved on and needed more actions to recover.
-The freshness checks cost calls and earn them back.
+Where the time goes, per action, measured: settle 230 ms, observe 28 ms,
+classifier 225 ms, execute 24 ms. Ten actions and four text calls put the
+floor at about 5.4 s with nothing wasted, so the target is not out of reach
+in principle. The distance from 5.4 s to 8.87 s is decisions thrown away
+because the page changed while the model was answering.
+
+Five separate attempts to recover them all measured **slower**, and are
+recorded here so they are not tried again:
+
+| attempt | result |
+|---|---|
+| Re-use a discarded decision when the action table is unchanged | 1/5 verified |
+| Drop the acting frame's marker check in `execute()` | 13.6 s, 4/5 |
+| Compare only the acting frame's marker in `fresh()` | 10.4 s, decisions rose |
+| Ask the classifier during the settle wait, keep the answer if the settled page matches | 10.0 s, 45% of answers usable |
+| Focus the chosen node directly when the click did not | 9.7 s, much wider spread |
+
+The first three relax what counts as a stale page, and each let the agent act
+on a page that had moved on, which cost more actions than it saved calls. The
+fourth cannot work in principle: the snapshot it asks from is taken during
+the settle, so it predates the very change being waited for. The freshness
+checks cost calls and earn them back.
+
+What remains is network. `connect` to the classifier from the machine these
+figures come from is 160 ms, so about 147 ms of each 225 ms call is a round
+trip and only about 75 ms is inference. `jev-ultrafast`'s reported 178 ms per
+call is less than our round trip alone, which means their figure was taken
+near the service. Run this library with a 30 ms round trip and the same 22
+calls cost 2.3 s rather than 5.0 s, which puts the journey near 6.3 s. That
+is arithmetic from the measured parts, not a result: it has not been run.
 
 ## Limits and risks
 
