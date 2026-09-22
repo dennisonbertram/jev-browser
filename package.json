@@ -1,0 +1,28 @@
+{
+  "name": "jev-browser",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A browser agent that chooses an action from an indexed table of page controls instead of generating one.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "exports": { ".": "./src/index.ts" },
+  "files": ["src", "docs", "README.md", "LICENSE", "NOTICE"],
+  "scripts": {
+    "check": "npm run types && npm run test",
+    "types": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "fixtures": "tsx tests/fixtures/serve.ts",
+    "example": "tsx examples/live.ts"
+  },
+  "dependencies": {
+    "playwright": "^1.63.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.0"
+  }
+}

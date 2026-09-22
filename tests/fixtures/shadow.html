@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>shadow</title>
+  </head>
+  <body>
+    <div id="host-open"></div>
+    <div id="host-closed"></div>
+    <p id="shadow-result">unsubmitted</p>
+    <script>
+      // Open root, 2 deep: outer holds the labeled input, inner (nested open
+      // root) holds the submit button. Reading nested open shadow roots is
+      // exactly the gap this fixture proves.
+      const outerHost = document.getElementById("host-open");
+      const outerRoot = outerHost.attachShadow({ mode: "open" });
+      outerRoot.innerHTML = `
+        <label for="email">Email address</label>
+        <input id="email" type="email" />
+        <div id="inner-host"></div>
+      `;
+      const innerHost = outerRoot.getElementById("inner-host");
+      const innerRoot = innerHost.attachShadow({ mode: "open" });
+      innerRoot.innerHTML = `<button id="submit">Submit shadow form</button>`;
+      innerRoot.getElementById("submit").addEventListener("click", () => {
+        const email = outerRoot.getElementById("email").value;
+        document.getElementById("shadow-result").textContent =
+          "submitted:" + email;
+      });
+
+      // Closed root: genuinely unreachable from outside. No handle escapes
+      // this script, so a test proving unreachability must fail to find the
+      // button by any means other than this closure's own reference.
+      const closedHost = document.getElementById("host-closed");
+      const closedRoot = closedHost.attachShadow({ mode: "closed" });
+      closedRoot.innerHTML = `<button id="hidden-button">Hidden button</button>`;
+    </script>
+  </body>
+</html>

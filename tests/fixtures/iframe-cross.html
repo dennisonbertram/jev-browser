@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>iframe-cross</title>
+  </head>
+  <body>
+    <p>Cross-origin iframe: child is served from the foreign-origin port.</p>
+    <!-- An absolute URL on a different port is what makes this genuinely
+         cross-origin. The origin defaults to the documented :8792 and can be
+         overridden with ?foreign=http://localhost:PORT so two suites can run
+         on ephemeral ports at the same time. -->
+    <iframe id="child"></iframe>
+    <script>
+      const foreign =
+        new URLSearchParams(location.search).get("foreign") ||
+        "http://localhost:8792";
+      document.getElementById("child").src =
+        foreign + "/iframe-cross-child.html";
+    </script>
+  </body>
+</html>

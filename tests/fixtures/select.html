@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>select</title>
+  </head>
+  <body>
+    <!-- Wrapping <label>: the accessible name comes from the enclosing label,
+         with the control's own text excluded. -->
+    <label>
+      Ticket type
+      <select id="tier">
+        <option value="">Choose one</option>
+        <option value="general">General admission</option>
+        <option value="vip">VIP</option>
+        <option value="backstage" disabled>Backstage (sold out)</option>
+      </select>
+    </label>
+
+    <!-- Named only by aria-labelledby, pointing at a separate element. -->
+    <span id="guests-label">Guest count</span>
+    <input id="guests" aria-labelledby="guests-label" />
+
+    <fieldset>
+      <legend>Payment</legend>
+      <!-- A named button inside a fieldset: its own text wins over the legend. -->
+      <button id="pay">Pay now</button>
+    </fieldset>
+
+    <p id="select-result">none</p>
+    <script>
+      document.getElementById("tier").addEventListener("change", (event) => {
+        document.getElementById("select-result").textContent =
+          "tier:" + event.target.value;
+      });
+    </script>
+  </body>
+</html>

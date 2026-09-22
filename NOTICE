@@ -1,0 +1,14 @@
+This project reimplements, in TypeScript, the decision-loop design of
+jev-ultrafast by Browser Use:
+
+  https://github.com/browser-use/jev-ultrafast  (MIT License)
+
+That project is Python and drives a local Chrome over raw CDP. This one is an
+independent implementation. It keeps the core idea -- ask a classifier to pick
+one operation and one target from an indexed table of the page's controls, and
+call a small language model only to write field text -- and adds support for
+open shadow DOM, same-origin and cross-origin iframes, nested scrolling, file
+uploads, pop-up tabs, native selects, keyboard-only widgets, and canvas
+reporting. No code was copied.
+
+The classifier is TypeSafe's Jev: https://docs.typesafe.ai

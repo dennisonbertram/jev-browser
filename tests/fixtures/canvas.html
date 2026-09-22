@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>canvas</title>
+  </head>
+  <body>
+    <!-- The canvas draws its own date-picker UI; nothing inside it is a DOM
+         node, so it can only ever be described by its aria-label. -->
+    <canvas
+      id="picker"
+      role="img"
+      width="200"
+      height="80"
+      aria-label="Pick date"
+    ></canvas>
+    <p><a href="#" id="fallback">Use the list instead</a></p>
+    <p id="canvas-result">no date</p>
+    <script>
+      const ctx = document.getElementById("picker").getContext("2d");
+      ctx.fillStyle = "#eee";
+      ctx.fillRect(0, 0, 200, 80);
+      ctx.fillStyle = "#333";
+      ctx.font = "14px sans-serif";
+      ctx.fillText("Pick date", 10, 30);
+      ctx.strokeRect(10, 40, 60, 24);
+      // The drawn button has no DOM node: only a real click inside its pixels
+      // reaches it, which is what a DOM-only agent cannot do and a
+      // screenshot-plus-coordinates agent can.
+      document.getElementById("picker").addEventListener("click", (event) => {
+        const box = event.target.getBoundingClientRect();
+        const x = event.clientX - box.left;
+        const y = event.clientY - box.top;
+        if (x >= 10 && x <= 70 && y >= 40 && y <= 64) {
+          document.getElementById("canvas-result").textContent = "date-picked";
+        }
+      });
+      // A legitimate DOM route to the same outcome.
+      document.getElementById("fallback").addEventListener("click", (event) => {
+        event.preventDefault();
+        document.getElementById("canvas-result").textContent = "list-used";
+      });
+    </script>
+  </body>
+</html>

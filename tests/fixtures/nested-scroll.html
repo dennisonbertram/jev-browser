@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>nested-scroll</title>
+    <style>
+      /* The window itself must not scroll; only the inner container does. */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+      }
+      #container {
+        height: 300px;
+        width: 300px;
+        overflow-y: auto;
+        border: 1px solid #ccc;
+        margin: 20px;
+      }
+      #container a {
+        display: block;
+        padding: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="container"></div>
+    <script>
+      const container = document.getElementById("container");
+      for (let i = 1; i <= 100; i++) {
+        const a = document.createElement("a");
+        a.href = "#";
+        a.textContent = "Row " + i;
+        if (i === 47) {
+          a.addEventListener("click", (e) => {
+            e.preventDefault();
+            document.title = "row-47";
+          });
+        }
+        container.appendChild(a);
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>iframe-cross-child</title>
+  </head>
+  <body>
+    <label for="promo">Promo code</label>
+    <input id="promo" type="text" />
+    <button id="apply">Apply</button>
+    <p id="out">idle</p>
+    <script>
+      document.getElementById("apply").addEventListener("click", () => {
+        const code = document.getElementById("promo").value;
+        document.getElementById("out").textContent = "applied:" + code;
+      });
+    </script>
+  </body>
+</html>
