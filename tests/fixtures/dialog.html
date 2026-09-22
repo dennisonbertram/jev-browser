@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Dialog</title>
+  </head>
+  <body>
+    <button id="confirm" type="button">Confirm delete</button>
+    <output id="result"></output>
+    <script>
+      document.querySelector("#confirm").addEventListener("click", () => {
+        const answer = window.confirm("Are you sure?");
+        document.querySelector("#result").textContent = String(answer);
+      });
+    </script>
+  </body>
+</html>

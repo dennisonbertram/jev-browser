@@ -171,13 +171,19 @@ function checkArgs(
 function renderTable(space: ActionSpace, observation: PageObservation): string {
   const lines: string[] = [];
   for (const element of space.elements) {
-    const parts = [`[${element.index}]`, element.role ?? "", element.label];
+    const isSelect = element.operations.includes("SELECT");
+    // A select's own label carries the first option after an arrow; the field
+    // is the part before it, and "option" is the option's role, not the field's.
+    const label = isSelect ? (element.label.split(" → ")[0] ?? element.label) : element.label;
+    const role = isSelect && element.role === "option" ? "combobox" : element.role;
+    const parts = [`[${element.index}]`, role ?? "", label];
     const value = element.currentValue ?? element.value;
     if (value) parts.push(`· ${value}`);
     parts.push(`(${element.operations.join(", ")})`);
     lines.push(parts.filter(Boolean).join(" "));
     for (const option of element.options ?? []) {
-      lines.push(`    [${option.index}] option ${option.label}`);
+      const optionLabel = option.label.split(" → ").at(-1) ?? option.label;
+      lines.push(`    [${option.index}] option ${optionLabel}`);
     }
   }
   const tabs = observation.tabs
@@ -247,7 +253,19 @@ export function createToolHost(options: ToolHostOptions): ToolHost {
           const action =
             space?.targets.SELECT?.[key] ??
             actionFor(index, ["CLICK", "UPLOAD_FILE", "PRESS_KEY"]);
-          if (!action) return no(`No control has index ${index} in the latest observation.`);
+          if (!action) {
+            const selectable = space?.elements.find(
+              (element) => element.index === String(index) && element.operations.includes("SELECT")
+            );
+            if (selectable) {
+              return no(
+                `Index ${index} is a select. Give option_index as well, for example one of: ${(selectable.options ?? [])
+                  .map((option) => option.index)
+                  .join(", ")}.`
+              );
+            }
+            return no(`No control has index ${index} in the latest observation.`);
+          }
           await execute(options.context, observation!, action, { uploadDir: options.uploadDir });
           return ok(`Did ${action.kind} on ${action.label}.`);
         }

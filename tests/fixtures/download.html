@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Download</title>
+  </head>
+  <body>
+    <a id="report" download="report.txt">Get the report</a>
+    <output id="result"></output>
+    <script>
+      const link = document.querySelector("#report");
+      const file = new Blob(["report"], { type: "text/plain" });
+      link.href = URL.createObjectURL(file);
+      link.addEventListener("click", () => {
+        document.querySelector("#result").textContent = "downloaded";
+      });
+    </script>
+  </body>
+</html>

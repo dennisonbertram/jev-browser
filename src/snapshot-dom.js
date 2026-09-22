@@ -1082,8 +1082,13 @@
           va.kind === "switch_tab"
         )
           continue;
+        // Keyed by kind and label, never by the action id. An id embeds the
+        // frame id, which is local to one process, and that made an identical
+        // page fingerprint differently after another process attached to it.
         valueParts.push(
-          va.id +
+          va.kind +
+            ":" +
+            (va.label || "") +
             "=" +
             (va.currentValue || va.value || "") +
             (va.checked ? "|c" : "") +

@@ -175,8 +175,12 @@ function fingerprint(
   scrollState: string[],
   valueStates: string[]
 ): string {
+  // The frame's URL and its marker, never the assigned frame id. An id is
+  // local to this process: attaching to the same browser from another process
+  // creates new frame objects with new ids, and an identical page would then
+  // fingerprint differently. Session state depends on this being stable.
   const framePart = frames
-    .map((f) => `${f.frameId}:${markers[f.frameId] ?? ""}`)
+    .map((f) => `${f.url}:${markers[f.frameId] ?? ""}`)
     .sort()
     .join("|");
   const tabPart = tabs
@@ -255,9 +259,9 @@ export async function observe(
     for (const [node, g] of Object.entries(snap.guards)) {
       guards[`${frameId}:${node}`] = g;
     }
-    valueStates.push(`${frameId}:${snap.valueState}`);
+    valueStates.push(`${snap.url}:${snap.valueState}`);
     scrollState.push(
-      `${frameId}:${snap.scrollers.map((entry) => `${entry.node ?? "v"}=${entry.top}`).join(",")}`
+      `${snap.url}:${snap.scrollers.map((entry) => `${entry.node ?? "v"}=${entry.top}`).join(",")}`
     );
     for (const scroller of snap.scrollers) {
       // One action per available direction, per container. A page with three

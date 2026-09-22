@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Slow navigation</title>
+  </head>
+  <body>
+    <button id="slow" type="button">Go slowly</button>
+    <script>
+      document.querySelector("#slow").addEventListener("click", () => {
+        setTimeout(() => {
+          window.location.href = "select.html";
+        }, 400);
+      });
+    </script>
+  </body>
+</html>
