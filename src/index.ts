@@ -23,6 +23,13 @@ export { execute, getActivePage } from "./execute.ts";
 export { actionSpace } from "./actions.ts";
 export type { ActionSpace, SpaceElement } from "./actions.ts";
 
+export { launchLocal, attachOverCdp } from "./browser.ts";
+export type {
+  AttachOverCdpOptions,
+  BrowserSession,
+  LaunchLocalOptions,
+} from "./browser.ts";
+
 export { StalePage } from "./types.ts";
 export type {
   Decision,
