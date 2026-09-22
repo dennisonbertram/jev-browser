@@ -419,7 +419,14 @@ async function fieldTextOnce(
     },
     body: JSON.stringify({
       model,
-      max_tokens: 1024,
+      // A reasoning model spends the budget thinking and then has nothing
+      // left for the answer: Cerebras returned content of null at 1024.
+      max_tokens: Number(process.env.TEXT_MODEL_MAX_TOKENS ?? 4000),
+      // Optional, and sent only when asked for. A field value needs no
+      // deliberation, and low effort cut one model's thinking to 14 tokens.
+      ...(process.env.TEXT_MODEL_REASONING_EFFORT
+        ? { reasoning_effort: process.env.TEXT_MODEL_REASONING_EFFORT }
+        : {}),
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: system },
@@ -451,10 +458,12 @@ async function fieldTextOnce(
   if (keys.length !== 1 || keys[0] !== "text")
     throw new Error('Text gateway JSON must have exactly one key, "text"');
   const value = (parsed as Record<string, unknown>).text;
-  if (typeof value !== "string" || value.length === 0 || value.length >= 2000) {
-    throw new Error(
-      'Text gateway "text" must be a non-empty string under 2000 characters'
-    );
+  // An empty string is a valid answer, not a failure. The prompt above tells
+  // the model to return {"text": ""} when it cannot determine a value, and
+  // rejecting that answer made the model repeat it until the run died. The
+  // caller decides what to do with nothing to type.
+  if (typeof value !== "string" || value.length >= 2000) {
+    throw new Error('the text model must answer with a string under 2000 characters');
   }
   // A newline or tab in generated text is typed as Enter or Tab: it would
   // submit a form or move focus. Generated text is a field value, never a key.

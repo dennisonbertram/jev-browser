@@ -167,6 +167,30 @@ export async function run(
           });
           text = generated.value;
           textLatencyMs = generated.latencyMs;
+          if (text === "") {
+            // The text model had no value for this field. Typing nothing
+            // would look like progress and loop; observe again and let the
+            // classifier choose something else. The stuck rule bounds this.
+            options.onStep?.({
+              step: history.length + 1,
+              action: action.label,
+              kind: action.kind,
+              choice: action.id,
+              operation: decision.operation,
+              target: decision.target,
+              confidence: decision.confidence,
+              probability: decision.probabilities[action.id] ?? 0,
+              text: null,
+              latencyMs: decision.latencyMs,
+              textLatencyMs,
+              pageChanged: false,
+              url: observation.url,
+              elapsedMs: since(),
+              usage: decision.usage,
+            });
+            observation = await observe(context, { screenshot: options.screenshots });
+            continue;
+          }
           usage.text_calls += 1;
           // Survives one stale retry, but only if the entire helper input is unchanged.
           pendingText.set(key, { value: text, latencyMs: textLatencyMs });
