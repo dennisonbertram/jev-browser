@@ -260,13 +260,37 @@ Chromium. Each figure says how many runs it comes from. Reproduce them with
 - **1,289 ms** median for a whole task, over 27 runs across 9 journeys.
 - **281 ms** to attach to a remote browser, **133 ms** to read a page on it.
 
+Two benchmarks run against live pages. Both need a classifier key and a text
+model; the figures below use Cerebras `gpt-oss-120b` at medium reasoning
+effort.
+
+```sh
+npx tsx examples/journeys.ts 2   # seven journeys, four local and three public
+npx tsx examples/flights.ts 5    # one hard journey on Google Flights
+```
+
+- **14 of 14** journeys pass, 2 repetitions each. Medians: Hacker News
+  677 ms, select 654 ms, cross-origin iframe 1.5 s, shadow DOM 1.9 s,
+  Wikipedia 2.3 s, MDN 2.6 s, nested scroll 4.2 s.
+- **5 of 5** Google Flights runs reach the flight list, median **10.8 s**,
+  range 9.3 to 13.2 s, 9 actions. At the median that is 4.8 s waiting on the
+  classifier over 21 calls, 0.3 s on the text model, and 6.4 s in the
+  browser. Each run is checked against the finished page, not against the
+  agent's own `DONE`.
+
+`jev-ultrafast` reports 7.073 s for the same Google Flights journey. We are
+slower. The gap is roughly half per-call classifier latency, which is the
+service and the network rather than this library, and half browser time.
+
 ## Limits and risks
 
 - The classifier declines some tasks it could finish. In one journey it chose
   `BLOCKED` while a usable link was in its own table. The policy is sensitive
   to the words in the goal.
-- The classifier finished 25/27 benchmark tasks; the LLM-decides control
-  finished 27/27. You trade some success rate for speed.
+- The classifier finished 25/27 tasks in the 9-journey benchmark; the
+  LLM-decides control finished 27/27. You trade some success rate for speed.
+  On the seven journeys in `examples/journeys.ts` it now finishes all of
+  them, and on Google Flights all 5 of 5, but both are small samples.
 - A task that types text needs a second model. Both it and the classifier are
   network calls, and both can fail.
 - A `DONE` decision is an opinion. Confirm the result from the page.
@@ -279,7 +303,7 @@ Chromium. Each figure says how many runs it comes from. Reproduce them with
 ## Tests
 
 ```sh
-pnpm run test    # 79 tests, real Chromium, local fixtures, no network
+pnpm run test    # 97 tests, real Chromium, local fixtures, no network
 pnpm run types
 ```
 
