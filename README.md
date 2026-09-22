@@ -322,7 +322,7 @@ floor at about 5.4 s with nothing wasted, so the target is not out of reach
 in principle. The distance from 5.4 s to 10.1 s is decisions thrown away
 because the page changed while the model was answering.
 
-Nine separate attempts to recover them measured slower against a five-run
+Ten separate attempts to recover them measured slower against a five-run
 baseline, and are recorded here. Two of them were later re-tested against a
 twelve-run baseline and kept, marked below: five runs could not tell them
 apart from noise. The rest are not worth retrying.
@@ -338,9 +338,14 @@ apart from noise. The rest are not worth retrying.
 | Abandon a classifier call once the page has moved, watching every frame | 11.9 s, 15 decisions |
 | The same, watching one marker on one frame | 12.3 s, 14 decisions |
 | Remember answers within a run, keyed by the exact request | **kept**, with the above |
+| Give up on a call once the page moves, at most once per action | 11.2 s vs 10.1 s, over twelve runs each |
 
-The last three are the interesting failures, because they all worked as
-intended and still lost. A longer quiet window cut decisions from 22 to 18.
+Several are interesting failures, because they worked as intended and still
+lost. Giving up on a call the moment the page moves cuts decisions furthest,
+to 14 unbounded or 18 bounded to once per action, fewer than the 17 it is
+being compared against. It loses anyway: reading the page while a request is
+in flight raises the cost of every call from about 200 ms to between 210 ms
+and 400 ms, which is more than the abandoned calls were worth. A longer quiet window cut decisions from 22 to 18.
 Abandoning a call the moment the page moved cut them to 14, the fewest of
 anything tried. In each case the cost of getting there exceeded the calls
 saved: settling longer costs every action, and an abandoned call still burns
