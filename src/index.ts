@@ -23,6 +23,9 @@ export { execute, getActivePage } from "./execute.ts";
 export { actionSpace } from "./actions.ts";
 export type { ActionSpace, SpaceElement } from "./actions.ts";
 
+export { clickInCanvas, screenshotCanvas, screenshotPage } from "./vision.ts";
+export type { Rect, Shot } from "./vision.ts";
+
 export { launchLocal, attachOverCdp } from "./browser.ts";
 export type {
   AttachOverCdpOptions,
