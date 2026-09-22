@@ -367,7 +367,33 @@ export async function decide(
   };
 }
 
+/**
+ * Ask the text model for one field value.
+ *
+ * A provider can answer with an empty body or a reply that is not the object
+ * this expects. That is transient, not a reason to end a task, so a bad answer
+ * is asked again. A wrong-shaped answer is never typed.
+ */
 export async function fieldText(
+  context: FieldTextContext
+): Promise<{ value: string; model: string; latencyMs: number }> {
+  let last: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await fieldTextOnce(context);
+    } catch (error) {
+      last = error;
+      if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 250));
+    }
+  }
+  throw new Error(
+    `The text model gave no usable value after three attempts: ${
+      last instanceof Error ? last.message : "unknown error"
+    }`
+  );
+}
+
+async function fieldTextOnce(
   context: FieldTextContext
 ): Promise<{ value: string; model: string; latencyMs: number }> {
   const token = process.env.TEXT_MODEL_API_KEY;
@@ -410,8 +436,8 @@ export async function fieldText(
   }
   const json = await res.json();
   const raw = json?.choices?.[0]?.message?.content;
-  if (typeof raw !== "string")
-    throw new Error("Text gateway returned no content");
+  if (typeof raw !== "string" || raw.trim() === "")
+    throw new Error("the text model returned no content");
 
   let parsed: unknown;
   try {

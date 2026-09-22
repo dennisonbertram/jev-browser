@@ -155,9 +155,17 @@
 
   // Recursively collects visible text, piercing open shadow roots and
   // resolving <slot> to its assigned content instead of its fallback.
-  function visibleTextContent(el) {
+  function visibleTextContent(el, insideName) {
     if (!el) return "";
     if (el.nodeType === 3) return el.nodeValue || "";
+    // A descendant contributes its own accessible name, not its text. Google's
+    // date picker puts the name one level below the cell that takes the click:
+    // the cell reads "20" and the child reads "Friday, November 20, 2026". The
+    // text-only walk produced 45 cells all called "20".
+    if (insideName && el.nodeType === 1 && el.getAttribute) {
+      var own = el.getAttribute("aria-label");
+      if (own && own.trim()) return clampName(own);
+    }
     // A ShadowRoot (11) is a DocumentFragment, not an Element: rejecting it
     // here meant every shadow root's text was silently dropped, so a shadow
     // control was actionable while its own error text stayed invisible.
@@ -165,7 +173,7 @@
       var frag = [];
       var kid = el.firstChild;
       while (kid) {
-        frag.push(visibleTextContent(kid));
+        frag.push(visibleTextContent(kid, true));
         kid = kid.nextSibling;
       }
       return frag.join(" ");
@@ -192,7 +200,7 @@
     var out = [];
     var child = parent.firstChild;
     while (child) {
-      out.push(visibleTextContent(child));
+      out.push(visibleTextContent(child, true));
       child = child.nextSibling;
     }
     return out.join(" ");
@@ -231,7 +239,7 @@
           if (typeof value === "string" && value) parts.push(value);
         }
       } else if (child.nodeType === 1) {
-        if (!child.contains(control)) parts.push(visibleTextContent(child));
+        if (!child.contains(control)) parts.push(visibleTextContent(child, true));
         else parts.push(labelTextExcluding(child, control));
       } else if (child.nodeType === 3) {
         parts.push(child.nodeValue || "");
