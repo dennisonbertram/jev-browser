@@ -13,6 +13,7 @@ import {
   type BrowserContext,
   type Page,
 } from "playwright";
+import { randomUUID } from "node:crypto";
 
 export type BrowserSession = {
   /** The Playwright browser. */
@@ -51,24 +52,157 @@ async function readCdpUrl(port: number): Promise<string> {
   const deadline = Date.now() + CDP_READY_TIMEOUT_MS;
   let lastError: unknown = null;
   while (Date.now() < deadline) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    // Bound this attempt to the time that remains so a stalled response
+    // cannot hold startup past the deadline; the signal also bounds the
+    // body read because it stays armed until the iteration finishes.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), remaining);
+    let response: Response | undefined;
     try {
-      const response = await fetch(url);
-      if (response.ok) {
+      response = await fetch(url, { signal: controller.signal });
+      if (Date.now() >= deadline) {
+        try {
+          await response.body?.cancel();
+        } catch {}
+        break;
+      }
+      if (!response.ok) {
+        // Drain or cancel a non-OK body so a foreign server cannot hold the
+        // socket open into the next poll.
+        try {
+          await response.body?.cancel();
+        } catch {}
+        if (Date.now() >= deadline) break;
+        lastError = new Error(`${url} answered with status ${response.status}`);
+      } else {
         const body = (await response.json()) as {
           webSocketDebuggerUrl?: string;
         };
-        if (body.webSocketDebuggerUrl) return body.webSocketDebuggerUrl;
+        if (Date.now() >= deadline) break;
+        if (
+          typeof body.webSocketDebuggerUrl === "string" &&
+          body.webSocketDebuggerUrl.length > 0
+        ) {
+          return body.webSocketDebuggerUrl;
+        }
         lastError = new Error(`${url} answered without webSocketDebuggerUrl`);
       }
     } catch (error) {
       lastError = error;
+      if (response) {
+        try {
+          await response.body?.cancel();
+        } catch {}
+      }
+      if (Date.now() >= deadline) break;
+    } finally {
+      clearTimeout(timeoutId);
     }
-    await new Promise((resolve) => setTimeout(resolve, CDP_POLL_MS));
+    if (Date.now() >= deadline) break;
+    const sleepMs = Math.min(CDP_POLL_MS, deadline - Date.now());
+    if (sleepMs <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, sleepMs));
   }
   const detail = lastError instanceof Error ? `: ${lastError.message}` : "";
   throw new Error(
     `CDP endpoint ${url} did not answer within ${CDP_READY_TIMEOUT_MS}ms${detail}`
   );
+}
+
+/**
+ * Proves the answering endpoint belongs to the browser this process launched.
+ * A random token in a probe page must show up in /json/list; otherwise the
+ * port is held by another browser.
+ */
+async function verifyCdpOwnership(
+  port: number,
+  browser: Browser
+): Promise<void> {
+  const token = randomUUID();
+  const listUrl = `http://127.0.0.1:${port}/json/list`;
+  const deadline = Date.now() + CDP_READY_TIMEOUT_MS;
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`about:blank#${token}`);
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `CDP endpoint ${listUrl} verification exceeded ${CDP_READY_TIMEOUT_MS}ms`
+      );
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new Error(
+        `CDP endpoint ${listUrl} verification exceeded ${CDP_READY_TIMEOUT_MS}ms`
+      );
+    }
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), remaining);
+    let response: Response | undefined;
+    try {
+      response = await fetch(listUrl, { signal: controller.signal });
+      if (Date.now() >= deadline) {
+        try {
+          await response.body?.cancel();
+        } catch {}
+        throw new Error(
+          `CDP endpoint ${listUrl} verification exceeded ${CDP_READY_TIMEOUT_MS}ms`
+        );
+      }
+      if (!response.ok) {
+        try {
+          await response.body?.cancel();
+        } catch {}
+        throw new Error(
+          `CDP endpoint ${listUrl} answered with status ${response.status}, expected probe token`
+        );
+      }
+      const entries = (await response.json()) as Array<{ url?: unknown }>;
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `CDP endpoint ${listUrl} verification exceeded ${CDP_READY_TIMEOUT_MS}ms`
+        );
+      }
+      const found =
+        Array.isArray(entries) &&
+        entries.some(
+          (entry) =>
+            typeof entry?.url === "string" &&
+            (entry.url as string).includes(token)
+        );
+      if (!found) {
+        throw new Error(
+          `CDP endpoint ${listUrl} does not belong to this browser: probe token not found`
+        );
+      }
+    } catch (error) {
+      if (response && !response.ok) {
+        // Already cancelled and wrapped above; rethrow as-is.
+        throw error;
+      }
+      if (
+        error instanceof Error &&
+        /does not belong|exceeded|answered with status/u.test(error.message)
+      ) {
+        throw error;
+      }
+      if (response) {
+        try {
+          await response.body?.cancel();
+        } catch {}
+      }
+      throw new Error(
+        `CDP endpoint ${listUrl} verification failed: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error }
+      );
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  } finally {
+    await context.close().catch(() => {});
+  }
 }
 
 /** Idempotent close: the second call does nothing and throws nothing. */
@@ -99,6 +233,7 @@ export async function launchLocal(
   if (options.cdpPort) {
     try {
       cdpUrl = await readCdpUrl(options.cdpPort);
+      await verifyCdpOwnership(options.cdpPort, browser);
     } catch (error) {
       await browser.close().catch(() => {});
       throw error;

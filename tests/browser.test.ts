@@ -9,6 +9,7 @@ import { attachOverCdp, launchLocal } from "../src/browser.ts";
 import type { BrowserSession } from "../src/browser.ts";
 import { start, stop } from "./fixtures/serve.ts";
 import { createServer, type Socket } from "node:net";
+import { createServer as createHttpServer } from "node:http";
 
 // Ephemeral ports: start(0) takes a free port, so this suite never collides
 // with the other suites or with a stray local browser.
@@ -62,6 +63,40 @@ describe("launchLocal", () => {
     const body = (await response.json()) as { webSocketDebuggerUrl?: string };
     expect(body.webSocketDebuggerUrl).toBe(cdpSession.cdpUrl);
   });
+
+  it("rejects in under 15 seconds when the CDP port is held by a hanging server", async () => {
+    // A handler that never answers: without an AbortSignal bound to the
+    // deadline the readiness poll would stall here forever.
+    const hanging = createHttpServer(() => {});
+    const sockets = new Set<Socket>();
+    hanging.on("connection", (socket: Socket) => {
+      sockets.add(socket);
+      socket.on("error", () => {});
+      socket.on("close", () => {
+        sockets.delete(socket);
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      hanging.once("error", reject);
+      hanging.listen(0, "127.0.0.1", () => resolve());
+    });
+    try {
+      const address = hanging.address();
+      if (address === null || typeof address === "string") {
+        throw new Error("expected a TCP address");
+      }
+      // Chromium cannot own a port that is already taken, so the endpoint
+      // answers (never) from our server and launchLocal must give up.
+      const startedAt = Date.now();
+      await expect(launchLocal({ cdpPort: address.port })).rejects.toThrow();
+      expect(Date.now() - startedAt).toBeLessThan(15_000);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve) => {
+        hanging.close(() => resolve());
+      });
+    }
+  }, 20_000);
 });
 
 describe("attachOverCdp", () => {
