@@ -221,8 +221,15 @@
     var child = labelEl.firstChild;
     while (child) {
       if (child === control) {
-        var value = control.value;
-        if (typeof value === "string" && value) parts.push(value);
+        // Only a select contributes its value to the name it sits inside.
+        // Substituting any control's value put a password into the label of
+        // its own field, and put a checkbox's default "on" in front of every
+        // wrapped checkbox label. A value also changes as the user types,
+        // which would move the name and the guard under a live decision.
+        if (control.tagName === "SELECT") {
+          var value = control.value;
+          if (typeof value === "string" && value) parts.push(value);
+        }
       } else if (child.nodeType === 1) {
         if (!child.contains(control)) parts.push(visibleTextContent(child));
         else parts.push(labelTextExcluding(child, control));
