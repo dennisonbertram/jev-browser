@@ -8,13 +8,18 @@ one element; a small language model runs only to write field text.
 
 ![jev-browser against a production worker on yahoo.com](docs/jev-vs-production-worker.gif)
 
-Both agents received the goal "Open the Finance section." on the same site, in
-the same browser, run back to back. jev-browser finished in **2.13 s** with 2
-decisions. The production worker finished in **8.20 s** with 4 decisions. The
-film is [docs/jev-vs-production-worker.mp4](docs/jev-vs-production-worker.mp4),
-and each clip starts when its agent starts, after the page has loaded.
+Two agents, the same goal, the same browser, run one after the other on the
+live site. This library finished in **2.13 s** with 2 decisions. An LLM
+tool-calling agent finished in **8.20 s** with 4 decisions. Each clip starts
+when its agent starts, after the page has loaded, so the timer measures the
+task. Full film:
+[docs/jev-vs-production-worker.mp4](docs/jev-vs-production-worker.mp4).
 
-## Measured on this machine
+## Performance
+
+Measured on an Apple M4 Max, macOS 15.7, Node 24, Playwright 1.63, headless
+Chromium. Each figure says how many runs it comes from. Reproduce them with
+`pnpm run test` for correctness and the scripts in `examples/` for timing.
 
 - **4 to 6 ms** to read a whole page, every frame, into a numbered table.
   Median of 12 runs for each page: 5 ms for a form, 4 ms through nested shadow
@@ -27,12 +32,21 @@ and each clip starts when its agent starts, after the page has loaded.
 - **1,289 ms** median for a whole task, over 27 runs across 9 journeys.
 - **281 ms** to attach to a remote browser, **133 ms** to read a page on it.
 
-Against the same nine journeys in the same browser, a production worker that
-uses an LLM tool-calling loop took **14,454 ms** median and 1.48M tokens, at
-21/27 tasks completed. This library took **1,289 ms** and 182k tokens, at 25/27.
-A third arm, this same engine with the LLM deciding instead of the classifier,
-took **37,110 ms**. The engine is identical in that comparison, so the
-difference is the decision.
+### Against an LLM tool-calling agent
+
+Nine journeys, three repetitions for each, all three agents in the same browser
+with the same goals and the same success test. A journey counts as done only
+when the page reaches its end state, which the harness checks, not the agent.
+
+| Agent | Tasks done | Median task | Tokens |
+| --- | --- | ---: | ---: |
+| This library, classifier decides | 25/27 | **1,289 ms** | 182k |
+| A browser worker on an LLM tool-calling loop | 21/27 | 14,454 ms | 1.48M |
+| This same engine, an LLM decides | 27/27 | 37,110 ms | 167k |
+
+The third row is the control. It runs this library's engine and changes only
+who picks the action. 1,289 ms against 37,110 ms is therefore the cost of the
+decision, and not of the browser layer.
 
 ## What it does
 

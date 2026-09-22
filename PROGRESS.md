@@ -17,12 +17,12 @@ Each subsystem follows the same loop:
 
 ## Baseline, measured
 
-From the benchmark in the Partyline repo (81 runs, one browser, nine journeys):
+From a three-arm benchmark (81 runs, one browser, nine journeys):
 
 | Arm | Success | Median | Tokens | Cost per successful run |
 | --- | --- | ---: | ---: | ---: |
 | this engine, Jev deciding | 25/27 | 1289 ms | 181,871 | not reported by the vendor |
-| a production worker on browser-loop | 21/27 | 14,454 ms | 1,483,107 | $0.00207 |
+| a browser worker on an LLM tool-calling loop | 21/27 | 14,454 ms | 1,483,107 | $0.00207 |
 | this engine, an LLM deciding | 27/27 | 37,110 ms | 166,639 | $0.00090 |
 
 Two facts shape the plan. The engine drives a remote CDP browser unchanged
@@ -34,7 +34,7 @@ decision, not the browser layer, is what makes a task fast.
 | Proof | Where | Result |
 | --- | --- | --- |
 | Out of repo, package install | `/tmp/jev-consumer`, installs the packed tarball | Observes a page it built itself, clicks a button inside an open shadow root, refuses a selector. |
-| Inside the product repository | `poc/jev-drop-in` in the Partyline repository, nested package install | Attaches to a Kernel browser in 281 ms, observes in 133 ms, mounts seven tools, acts by index, saves and restores session state, releases the browser without closing it. |
+| Inside a consuming product | a nested package install in the product that asked for this library | Attaches to a Kernel browser in 281 ms, observes in 133 ms, mounts seven tools, acts by index, saves and restores session state, releases the browser without closing it. |
 | Standalone example | `examples/standalone.ts` | Launches its own browser and drives a fixture through the tool surface. |
 
 ## Subsystems
@@ -54,7 +54,7 @@ decision, not the browser layer, is what makes a task fast.
 
 ## Log
 
-- Extracted from the Partyline proof of concept. The engine imports only
+- Extracted from the proof of concept it grew in. The engine imports only
   Playwright; no application code came with it.
 - The text helper now speaks to any OpenAI-compatible endpoint, set by
   `TEXT_MODEL_BASE_URL`. It was wired to one vendor's gateway.
