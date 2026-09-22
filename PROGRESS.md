@@ -38,8 +38,8 @@ decision, not the browser layer, is what makes a task fast.
 | S2 | Vision and coordinates | a control drawn on a canvas has no DOM node | built, reviewed, fixes specified |
 | S3 | Screenshot redaction | an image must not carry a secret out of the process | done |
 | S4 | Credential autofill | log in without a model ever seeing a secret | done, review pending |
-| S5 | Telemetry | per-decision timings and outcomes, redacted | to do |
-| S6 | Agent tool surface | mount the library in any agent framework | to do |
+| S5 | Telemetry | per-decision timings and outcomes, redacted | done |
+| S6 | Agent tool surface | mount the library in any agent framework | done |
 | S7 | Session state | carry element references across processes | to do |
 | S8 | Hardening | dialogs, downloads, retries, each with a regression test | to do |
 | S9 | Documentation | plain English, accurate, with an integration guide | to do |
@@ -70,3 +70,9 @@ decision, not the browser layer, is what makes a task fast.
 - The implementer models differ in kind. `meta/muse-spark-1.3` returns empty
   content and invents files; `gpt-5.6-luna-fast` answers correctly and costs
   about one tenth as much. luna is the default.
+
+- S6 was rewritten by hand. The implementer built the tool surface on a CSS
+  selector sweep of the page, which would have lost shadow DOM, iframes,
+  accessible names, nested scroll containers and canvas reporting: everything
+  the library exists for. It now goes through observe, actionSpace and execute
+  like every other path.

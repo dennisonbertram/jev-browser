@@ -49,3 +49,6 @@ export type { MaskTarget } from "./redact.ts";
 
 export { fillCredentials, findCredentialFields } from "./autofill.ts";
 export type { CredentialSource, FillOutcome } from "./autofill.ts";
+
+export { createToolHost } from "./tools.ts";
+export type { ToolDefinition, ToolHost, ToolHostOptions, ToolResult } from "./tools.ts";
