@@ -1055,6 +1055,7 @@
   function addPressActions(doc, ctx) {
     var el = doc.activeElement;
     if (!el || el === doc.body || el === doc.documentElement) return;
+    if (ctx.allowed && !ctx.allowed(el)) return;
     var idx = indexOf(el);
     var name = accessibleName(el) || resolveRole(el) || "the focused element";
     var role = resolveRole(el);
@@ -1185,7 +1186,11 @@
   // element is inert by contract, but a drawer's backdrop is often not a
   // hit-test target: on Target the loop scrolled the page behind an open
   // purchase drawer. A native modal <dialog> needs none of this; the top
-  // layer already covers the page.
+  // layer already covers the page. A modal counts only when the point at
+  // its centre lands inside it: that rules out one an ancestor hides or
+  // clips, and one another modal covers.
+  // ponytail: modals inside shadow roots are not found, and a top-document
+  // modal does not hide a background iframe's controls.
   function topModal() {
     var open = Array.prototype.filter.call(
       document.querySelectorAll('[aria-modal="true"]'),
@@ -1194,17 +1199,48 @@
         var cs = getComputedStyle(el);
         if (cs.visibility === "hidden" || Number(cs.opacity) === 0) return false;
         var r = el.getBoundingClientRect();
-        return (
-          r.width > 0 &&
-          r.height > 0 &&
-          r.right > 0 &&
-          r.bottom > 0 &&
-          r.left < innerWidth &&
-          r.top < innerHeight
-        );
+        if (
+          !(
+            r.width > 0 &&
+            r.height > 0 &&
+            r.right > 0 &&
+            r.bottom > 0 &&
+            r.left < innerWidth &&
+            r.top < innerHeight
+          )
+        )
+          return false;
+        var x = (Math.max(r.left, 0) + Math.min(r.right, innerWidth)) / 2;
+        var y = (Math.max(r.top, 0) + Math.min(r.bottom, innerHeight)) / 2;
+        var hit = document.elementFromPoint(x, y);
+        return hit !== null && insideOf(el, hit);
       }
     );
     return open.length ? open[open.length - 1] : null;
+  }
+
+  // What may be acted on while a modal is open: the modal, and any list or
+  // popup a control inside it names with aria-controls or aria-owns, which
+  // sites often render outside the dialog.
+  function modalScope(modal) {
+    var owned = [modal];
+    var named = modal.querySelectorAll("[aria-controls],[aria-owns]");
+    for (var i = 0; i < named.length; i++) {
+      var ids = (
+        (named[i].getAttribute("aria-controls") || "") +
+        " " +
+        (named[i].getAttribute("aria-owns") || "")
+      ).split(/\s+/);
+      for (var j = 0; j < ids.length; j++) {
+        var target = ids[j] && document.getElementById(ids[j]);
+        if (target) owned.push(target);
+      }
+    }
+    return function (el) {
+      for (var k = 0; k < owned.length; k++)
+        if (insideOf(owned[k], el)) return true;
+      return false;
+    };
   }
 
   function insideOf(container, el) {
@@ -1222,11 +1258,23 @@
 
   function filterUnreachable(ctx) {
     var modal = topModal();
+    var allowed = modal ? modalScope(modal) : null;
+    ctx.allowed = allowed;
+    if (allowed) {
+      var box = modal.getBoundingClientRect();
+      ctx.scrollers = ctx.scrollers.filter(function (scroller) {
+        // The page itself scrolls only to reach a modal taller than the view.
+        if (scroller.node === undefined)
+          return box.top < 0 || box.bottom > innerHeight;
+        var el = nodes.get(scroller.node);
+        return !!el && allowed(el);
+      });
+    }
     ctx.actions = ctx.actions.filter(function (action) {
       if (!action.ref) return true;
       var el = nodes.get(action.ref.node);
       if (!el) return true;
-      if (modal && !insideOf(modal, el)) return false;
+      if (allowed && !allowed(el)) return false;
       // A file input is exempt: sites routinely collapse it and drive it from
       // a styled label, and it is still the only way to attach a file.
       if (action.kind === "upload") return true;

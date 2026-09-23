@@ -28,13 +28,17 @@ const SNAPSHOT_PATH = join(THIS_DIR, "snapshot-dom.js");
 // object for the life of the frame (same-document navigations included), so
 // a WeakMap gives us cheap, stable ids without touching the page.
 let frameCounter = 0;
+// The in-page engine outlives the connection that named its frames, so two
+// processes attaching in turn must not reuse each other's names: a stale
+// action from one would otherwise resolve to a different frame of the other.
+const PROCESS_TAG = Math.random().toString(36).slice(2, 7);
 const frameIds = new WeakMap<Frame, string>();
 const framesById = new Map<string, Frame>();
 
 function idFor(frame: Frame): string {
   let id = frameIds.get(frame);
   if (!id) {
-    id = `f${frameCounter++}`;
+    id = `f${PROCESS_TAG}-${frameCounter++}`;
     frameIds.set(frame, id);
   }
   framesById.set(id, frame);

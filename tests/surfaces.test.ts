@@ -157,3 +157,76 @@ describe("going back", () => {
     await page.close();
   }, 30_000);
 });
+
+describe("a modal, as the review found it", () => {
+  const drawer = (extra = "") => `
+    <main style="height:3000px"><button>Choose options</button>
+      <div style="height:200px;overflow:auto"><div style="height:900px">long</div></div></main>
+    <div role="dialog" aria-modal="true" aria-label="Purchase options"
+      style="position:fixed;right:0;top:0;width:400px;height:100vh;background:#fff">
+      <div style="height:60vh;overflow:auto"><div style="height:1500px"><button>Size M</button></div></div>
+      <button>Add to cart</button>${extra}
+    </div>`;
+
+  it("offers no scrolling or key press behind it", async () => {
+    const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
+    await page.setContent(drawer());
+    await page.focus("text=Choose options");
+    const actions = (await observe(page)).actions;
+    await page.close();
+
+    expect(actions.filter((a) => a.kind === "press")).toEqual([]);
+    expect(actions.filter((a) => a.kind === "scroll").length).toBe(1);
+  }, 30_000);
+
+  it("ignores a modal that an ancestor makes invisible", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`<button>Checkout</button>
+      <div style="opacity:0;pointer-events:none"><div role="dialog" aria-modal="true"
+        style="position:fixed;top:0;width:300px;height:300px"><button>Hidden</button></div></div>`);
+    const labels = (await observe(page)).actions.map((a) => a.label);
+    await page.close();
+
+    expect(labels).toContain("Checkout");
+  }, 30_000);
+
+  it("takes the modal that is visibly on top, not the last in the page", async () => {
+    const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
+    await page.setContent(`
+      <div role="dialog" aria-modal="true" style="position:fixed;inset:0;z-index:10;background:#fff"><button>Confirm A</button></div>
+      <div role="dialog" aria-modal="true" style="position:fixed;left:300px;top:250px;width:200px;height:100px;z-index:1"><button>Confirm B</button></div>`);
+    const labels = (await observe(page)).actions.map((a) => a.label);
+    await page.close();
+
+    expect(labels).toContain("Confirm A");
+  }, 30_000);
+
+  it("offers the options of a list the modal controls, even when rendered outside it", async () => {
+    const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
+    await page.setContent(`${drawer(`<input role="combobox" aria-label="Colour" aria-controls="colours" aria-expanded="true">`)}
+      <div id="colours" role="listbox" style="position:fixed;right:40px;top:300px;width:200px;z-index:5;background:#eee">
+        <div role="option">Blue</div></div>`);
+    const labels = (await observe(page)).actions.map((a) => a.label);
+    await page.close();
+
+    expect(labels).toContain("Blue");
+  }, 30_000);
+});
+
+describe("frame names across processes", () => {
+  it("names frames differently in two processes", async () => {
+    const { vi } = await import("vitest");
+    const page = await browser.newPage();
+    await page.setContent("<button>Go</button>");
+    // Two fresh copies of the module stand in for two processes.
+    vi.resetModules();
+    const first = await import("../src/observe.js");
+    vi.resetModules();
+    const second = await import("../src/observe.js");
+    const one = await first.observe(page);
+    const two = await second.observe(page);
+    await page.close();
+
+    expect(one.frames[0]!.frameId).not.toBe(two.frames[0]!.frameId);
+  }, 30_000);
+});
