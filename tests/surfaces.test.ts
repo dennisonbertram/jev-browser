@@ -132,3 +132,28 @@ describe("an iframe replaced by a new one", () => {
     expect(title).toBe("clicked");
   }, 30_000);
 });
+
+describe("going back", () => {
+  it("offers BACK only when there is a page to go back to, and goes there", async () => {
+    const page = await browser.newPage();
+    await page.route("http://shop.test/**", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: route.request().url().endsWith("/item")
+          ? "<title>Item</title><button>Buy</button>"
+          : "<title>Results</title><a href='/item'>Item</a>",
+      }),
+    );
+    await page.goto("http://shop.test/results");
+    const first = await observe(page);
+    await page.goto("http://shop.test/item");
+    const second = await observe(page);
+    const back = second.actions.find((a) => a.kind === "back");
+
+    expect(first.actions.some((a) => a.kind === "back")).toBe(false);
+    expect(back).toBeDefined();
+    await execute(page, second, back!);
+    await expect.poll(() => page.title()).toBe("Results");
+    await page.close();
+  }, 30_000);
+});

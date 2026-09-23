@@ -713,6 +713,13 @@ export async function execute(
       return { executed: action.id };
     }
 
+    case "back": {
+      const page = getActivePage(context);
+      if (!page) throw new StalePage("no open tab to go back in");
+      await page.goBack({ waitUntil: "commit", timeout: 15_000 });
+      return { executed: action.id };
+    }
+
     case "wait": {
       const ms = clampWaitMs(action.value);
       await new Promise((resolve) => setTimeout(resolve, ms));

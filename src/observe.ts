@@ -386,6 +386,24 @@ export async function observe(
     value: "1500",
     guard: "wait",
   });
+  // Going back is offered when this site has a page to go back to, so a
+  // wrong turn or a detail page can return to the results. The Navigation
+  // API sees only this site's entries.
+  // ponytail: no BACK across sites; a CDP navigation history would allow it.
+  const canGoBack = await active
+    .evaluate(
+      () =>
+        (globalThis as { navigation?: { canGoBack?: boolean } }).navigation
+          ?.canGoBack === true
+    )
+    .catch(() => false);
+  if (canGoBack)
+    actions.push({
+      id: "back",
+      kind: "back",
+      label: "Go back to the previous page",
+      guard: "back",
+    });
 
   const observation: PageObservation = {
     url: active.url(),

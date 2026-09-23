@@ -30,6 +30,7 @@ export type Operation =
   | "SCROLL_DOWN"
   | "SWITCH_TAB"
   | "WAIT"
+  | "BACK"
   | "DONE"
   | "BLOCKED";
 
@@ -41,7 +42,8 @@ type ActionKind =
   | "upload"
   | "scroll"
   | "switch_tab"
-  | "wait";
+  | "wait"
+  | "back";
 
 /** One executable action, always derived by code from an observed node. */
 export type ObservedAction = {

@@ -71,7 +71,7 @@ type ScrollGroup = { up?: ObservedAction; down?: ObservedAction };
  * the only accepted form, and callers kept passing the observation.
  */
 export function actionSpace(
-  source: PageObservation | ObservedAction[]
+  source: PageObservation | ObservedAction[],
 ): ActionSpace {
   const actions = Array.isArray(source) ? source : source.actions;
   const nodeOrder: string[] = [];
@@ -80,6 +80,7 @@ export function actionSpace(
   const scrollers = new Map<string, ScrollGroup>();
   const switchTabActions: ObservedAction[] = [];
   let waitAction: ObservedAction | undefined;
+  let backAction: ObservedAction | undefined;
 
   for (const action of actions) {
     const op = KIND_TO_OP[action.kind];
@@ -134,6 +135,10 @@ export function actionSpace(
     }
     if (action.kind === "wait") {
       if (!waitAction) waitAction = action;
+      continue;
+    }
+    if (action.kind === "back") {
+      if (!backAction) backAction = action;
       continue;
     }
     // kind without a usable ref (click/fill/select/press/upload missing `ref`) is unreachable: skip.
@@ -195,6 +200,7 @@ export function actionSpace(
 
   const controls: ActionSpace["controls"] = {};
   if (waitAction) controls.WAIT = waitAction;
+  if (backAction) controls.BACK = backAction;
 
   if (scrollOrder.length <= 1) {
     const group =

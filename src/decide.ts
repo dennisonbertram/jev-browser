@@ -83,6 +83,7 @@ const OPERATION_DESCRIPTIONS: Record<Operation, string> = {
   SWITCH_TAB:
     "Switch to another open browser tab. Only the active tab's controls are listed, so a control that should exist but is absent is probably in another tab.",
   WAIT: "Wait briefly for the page to finish loading or updating.",
+  BACK: "Go back to the previous page, to return to a list of results or to undo a wrong turn.",
   DONE: "The goal is already satisfied.",
   BLOCKED: "No offered operation can make progress.",
 };
