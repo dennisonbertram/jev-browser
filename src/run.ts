@@ -162,7 +162,7 @@ function offersSomething(observation: PageObservation): boolean {
 
 export async function run(
   target: BrowserTarget,
-  options: RunOptions
+  options: RunOptions,
 ): Promise<RunResult> {
   const context = contextOf(target);
   const goal = options.goal.trim();
@@ -177,10 +177,16 @@ export async function run(
   const look = () =>
     bounded(
       observe(context, { screenshot: options.screenshots, diagnostics: false }),
-      limit
+      limit,
     );
   const stillFresh = (seen: PageObservation, action?: ObservedAction) =>
     bounded(fresh(context, seen, action), limit);
+  // A met condition counts only if the page it was checked on is still the
+  // page: the check is a model call, and the page can move while it runs.
+  const holds = async (seen: PageObservation) =>
+    options.isDone !== undefined &&
+    (await options.isDone(seen)) &&
+    (await stillFresh(seen));
   let observation: PageObservation | undefined;
   let status: "ready" | "done" | "blocked" = "ready";
   let reason = "the loop ended without a stated reason";
@@ -219,7 +225,7 @@ export async function run(
       ? undefined
       : setTimeout(
           () => stop.abort(new Error("time budget")),
-          Math.max(0, options.deadlineAt - Date.now())
+          Math.max(0, options.deadlineAt - Date.now()),
         );
   const stopReason = () =>
     options.signal?.aborted
@@ -243,6 +249,19 @@ export async function run(
         observation = await look();
       }
 
+      // The end condition is checked on every new page state, so the run
+      // stops the moment it holds rather than when the classifier notices. It
+      // comes before the empty-page rule: a finished page often has nothing
+      // left to act on.
+      if (options.isDone && checkedFingerprint !== observation.fingerprint) {
+        checkedFingerprint = observation.fingerprint;
+        if (await holds(observation)) {
+          status = "done";
+          reason = "the end condition is met";
+          break;
+        }
+      }
+
       // A page with no controls gets no classifier call: asked about an
       // empty table, the classifier answered BLOCKED in 0.3 s on three real
       // sites that were still loading.
@@ -257,23 +276,12 @@ export async function run(
         break;
       }
 
-      // The end condition is checked on every new page state, so the run
-      // stops the moment it holds rather than when the classifier notices.
-      if (options.isDone && checkedFingerprint !== observation.fingerprint) {
-        checkedFingerprint = observation.fingerprint;
-        if (await options.isDone(observation)) {
-          status = "done";
-          reason = "the end condition is met";
-          break;
-        }
-      }
-
       const decision = await decide(
         observation,
         goal,
         history,
         answers,
-        stop.signal
+        stop.signal,
       );
       decisions.push({ ...decision, elapsedMs: since() });
       usage.input_tokens += decision.usage.input_tokens;
@@ -294,7 +302,7 @@ export async function run(
           // A claim gets a fresh check. The one before this decision may have
           // run while the page was still settling, and a purely visual change
           // leaves the fingerprint as it was, so nothing else re-checks it.
-          if (await options.isDone(observation)) {
+          if (await holds(observation)) {
             status = "done";
             reason = "the end condition is met";
             break;
@@ -336,11 +344,11 @@ export async function run(
       }
 
       const action = observation.actions.find(
-        (candidate) => candidate.id === decision.choice
+        (candidate) => candidate.id === decision.choice,
       );
       if (!action)
         throw new Error(
-          `Decision named an action this observation does not contain: ${decision.choice}`
+          `Decision named an action this observation does not contain: ${decision.choice}`,
         );
       if (history.length >= MAX_ACTIONS) {
         status = "blocked";
@@ -381,7 +389,7 @@ export async function run(
                   .slice(-6)
                   .map((entry) => ({ action: entry.action, text: entry.text })),
               },
-              stop.signal
+              stop.signal,
             );
             text = generated.value;
             textLatencyMs = generated.latencyMs;
@@ -428,7 +436,7 @@ export async function run(
             text: text ?? undefined,
             uploadDir,
           }),
-          limit
+          limit,
         );
         pendingText.clear();
       } catch (error) {
@@ -494,9 +502,9 @@ export async function run(
         settle(
           activePage(context),
           action,
-          action.ref ? before.markers[action.ref.frameId] : undefined
+          action.ref ? before.markers[action.ref.frameId] : undefined,
         ),
-        limit
+        limit,
       );
       observation = await look();
       entry.pageChanged = observation.fingerprint !== before.fingerprint;
@@ -512,16 +520,18 @@ export async function run(
       // do not finish the subgoal; a network-idle signal would be tighter.
       if (options.isDone) {
         const until = performance.now() + CONDITION_WAIT_MS;
-        let met = await options.isDone(observation);
+        let met = await holds(observation);
         checkedFingerprint = observation.fingerprint;
         while (!met && performance.now() < until) {
           await new Promise((resolve) => setTimeout(resolve, 400));
           observation = await look();
           if (observation.fingerprint === checkedFingerprint) continue;
           checkedFingerprint = observation.fingerprint;
-          met = await options.isDone(observation);
+          met = await holds(observation);
         }
         if (met) conditionMet = true;
+        // Changes that landed during the window are progress too.
+        entry.pageChanged = observation.fingerprint !== before.fingerprint;
       }
       entry.url = observation.url;
       entry.elapsedMs = since();
@@ -593,7 +603,7 @@ function textKey(
   goal: string,
   action: ObservedAction,
   observation: PageObservation,
-  history: HistoryEntry[]
+  history: HistoryEntry[],
 ) {
   return JSON.stringify([
     goal,
@@ -617,7 +627,7 @@ function activePage(context: BrowserContext): Page {
 export async function runOnce(
   browser: Browser,
   url: string,
-  options: RunOptions
+  options: RunOptions,
 ) {
   const context = await browser.newContext({
     viewport: { width: 1120, height: 780 },

@@ -33,6 +33,8 @@ type Stubs = {
   holds: (statement: string, pageText: string) => boolean;
   /** Facts the extractor returns. */
   facts?: Record<string, { value: string; quote: string }>;
+  /** What the planner returns when asked to repair its plan. */
+  repair?: unknown;
 };
 
 /** Route each model request to a deterministic answer. */
@@ -40,9 +42,10 @@ function stubModels(stubs: Stubs): { classifierCalls: () => number } {
   process.env.TYPESAFE_API_KEY = "test";
   process.env.TEXT_MODEL_API_KEY = "test";
   let classifierCalls = 0;
+  let planCalls = 0;
   globalThis.fetch = (async (
     url: string | URL | Request,
-    init?: RequestInit
+    init?: RequestInit,
   ) => {
     const href = String(url instanceof Request ? url.url : url);
     const body = JSON.parse(String(init?.body ?? "{}"));
@@ -53,7 +56,7 @@ function stubModels(stubs: Stubs): { classifierCalls: () => number } {
         body.questions as Record<
           string,
           { type: string; instructions: unknown; criteria?: object }
-        >
+        >,
       )) {
         if (question.type === "noul") {
           answers[name] = {
@@ -75,7 +78,7 @@ function stubModels(stubs: Stubs): { classifierCalls: () => number } {
           choice,
           confidence: 1,
           probabilities: Object.fromEntries(
-            keys.map((k) => [k, k === choice ? 1 : 0])
+            keys.map((k) => [k, k === choice ? 1 : 0]),
           ),
         };
       }
@@ -85,8 +88,12 @@ function stubModels(stubs: Stubs): { classifierCalls: () => number } {
       });
     }
     const system = String(body.messages?.[0]?.content ?? "");
-    const content = system.includes("You plan")
-      ? stubs.plan
+    const planning = system.includes("You plan");
+    if (planning) planCalls += 1;
+    const content = planning
+      ? planCalls > 1 && stubs.repair !== undefined
+        ? stubs.repair
+        : stubs.plan
       : system.includes("You extract")
         ? (stubs.facts ?? {})
         : { text: "" };
@@ -150,10 +157,10 @@ describe("the whole-task runner", () => {
       expect.objectContaining({ id: "times", status: "done" }),
     ]);
     expect(result.facts.times).toEqual(
-      expect.objectContaining({ value: "9:00 AM, 11:30 AM", supported: true })
+      expect.objectContaining({ value: "9:00 AM, 11:30 AM", supported: true }),
     );
     expect(result.facts.price).toEqual(
-      expect.objectContaining({ value: "$69", supported: true })
+      expect.objectContaining({ value: "$69", supported: true }),
     );
   }, 30_000);
 
@@ -184,7 +191,7 @@ describe("the whole-task runner", () => {
       expect.objectContaining({
         status: "blocked",
         reason: "the classifier claimed done, but the end condition is not met",
-      })
+      }),
     );
     // It asked again after the first refused claim, rather than accepting it.
     expect(counter.classifierCalls()).toBeGreaterThanOrEqual(2);
@@ -223,7 +230,7 @@ describe("the whole-task runner", () => {
       expect.objectContaining({
         status: "done",
         reason: "the end condition is met",
-      })
+      }),
     );
   }, 30_000);
 
@@ -257,7 +264,7 @@ describe("the whole-task runner", () => {
     await context.close();
 
     expect(result.subgoals[0]).toEqual(
-      expect.objectContaining({ status: "done", actions: 1 })
+      expect.objectContaining({ status: "done", actions: 1 }),
     );
   }, 30_000);
 
@@ -286,7 +293,7 @@ describe("the whole-task runner", () => {
     await context.close();
 
     expect(result.facts.price).toEqual(
-      expect.objectContaining({ value: null, supported: false })
+      expect.objectContaining({ value: null, supported: false }),
     );
   }, 30_000);
 
@@ -312,7 +319,7 @@ describe("the whole-task runner", () => {
     const context = await browser.newContext();
     const page = await context.newPage();
     await page.setContent(
-      `<label>Guests <select><option>1 - Adult</option><option>2 - Adults</option></select></label>${TIMES_PAGE}`
+      `<label>Guests <select><option>1 - Adult</option><option>2 - Adults</option></select></label>${TIMES_PAGE}`,
     );
 
     const result = await runTask(page, {
@@ -321,7 +328,7 @@ describe("the whole-task runner", () => {
     await context.close();
 
     expect(result.facts.quantity).toEqual(
-      expect.objectContaining({ value: "1 adult", supported: true })
+      expect.objectContaining({ value: "1 adult", supported: true }),
     );
   }, 30_000);
 
@@ -346,7 +353,7 @@ describe("the whole-task runner", () => {
     const stubbed = globalThis.fetch;
     globalThis.fetch = (async (
       url: string | URL | Request,
-      init?: RequestInit
+      init?: RequestInit,
     ) => {
       const body = JSON.parse(String(init?.body ?? "{}"));
       if (String(body.messages?.[0]?.content ?? "").includes("You plan"))
@@ -399,7 +406,7 @@ describe("the whole-task runner", () => {
     const stubbed = globalThis.fetch;
     globalThis.fetch = (async (
       url: string | URL | Request,
-      init?: RequestInit
+      init?: RequestInit,
     ) => {
       const body = JSON.parse(String(init?.body ?? "{}"));
       const system = String(body.messages?.[0]?.content ?? "");
@@ -467,7 +474,7 @@ describe("the whole-task runner", () => {
     const stubbed = globalThis.fetch;
     globalThis.fetch = (async (
       url: string | URL | Request,
-      init?: RequestInit
+      init?: RequestInit,
     ) => {
       const body = JSON.parse(String(init?.body ?? "{}"));
       if (String(body.messages?.[0]?.content ?? "").includes("You plan")) {
@@ -527,10 +534,10 @@ describe("the whole-task runner", () => {
         id: "one",
         status: "blocked",
         reason: "the run was cancelled",
-      })
+      }),
     );
     expect(result.subgoals[1]).toEqual(
-      expect.objectContaining({ status: "skipped" })
+      expect.objectContaining({ status: "skipped" }),
     );
   }, 30_000);
 
@@ -545,8 +552,122 @@ describe("the whole-task runner", () => {
     await page.setContent(TIMES_PAGE);
 
     await expect(runTask(page, { task: "Do something." })).rejects.toThrow(
-      "the planner returned no usable plan"
+      "the planner returned no usable plan",
     );
     await context.close();
+  }, 30_000);
+
+  it("refuses a plan in which any subgoal cannot be checked, rather than dropping it", async () => {
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "open",
+            goal: "Show the times",
+            done_when: ["Times are shown"],
+            collect: [],
+          },
+          { id: "pick", goal: "Choose a time", done_when: [], collect: [] },
+        ],
+        report: [],
+      },
+      operation: "CLICK",
+      holds: () => true,
+    });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(TIMES_PAGE);
+
+    await expect(runTask(page, { task: "Choose a time." })).rejects.toThrow(
+      "the planner returned no usable plan",
+    );
+    await context.close();
+  }, 30_000);
+
+  it("refuses a repair that is itself unusable, instead of keeping the uncheckable plan", async () => {
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "pick",
+            goal: "Pick the earliest date",
+            done_when: ["The earliest date is selected"],
+            collect: [],
+          },
+        ],
+        report: [],
+      },
+      repair: { subgoals: [] },
+      operation: "CLICK",
+      holds: () => true,
+    });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(TIMES_PAGE);
+
+    await expect(
+      runTask(page, { task: "Pick the earliest date." }),
+    ).rejects.toThrow("the planner returned no usable plan");
+    await context.close();
+  }, 30_000);
+
+  it("drops a fact whose quote is on the page but does not show the value", async () => {
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "times",
+            goal: "Show the available times",
+            done_when: ["Start times are shown on the page"],
+            collect: ["price"],
+          },
+        ],
+        report: ["price"],
+      },
+      operation: "CLICK",
+      holds: (_statement, text) => text.includes("Times:"),
+      facts: { price: { value: "$999", quote: "per person" } },
+    });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(TIMES_PAGE);
+
+    const result = await runTask(page, { task: "Show me the tour's price." });
+    await context.close();
+
+    expect(result.facts.price).toEqual(
+      expect.objectContaining({ value: null, supported: false }),
+    );
+  }, 30_000);
+
+  it("does not take an option that is not selected as evidence", async () => {
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "times",
+            goal: "Show the available times",
+            done_when: ["Start times are shown on the page"],
+            collect: ["quantity"],
+          },
+        ],
+        report: ["quantity"],
+      },
+      operation: "CLICK",
+      holds: (_statement, text) => text.includes("Times:"),
+      facts: { quantity: { value: "2 adults", quote: "2 - Adults" } },
+    });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(
+      `<label>Guests <select><option>1 - Adult</option><option>2 - Adults</option></select></label>${TIMES_PAGE}`,
+    );
+
+    const result = await runTask(page, { task: "Show me the tour's times." });
+    await context.close();
+
+    expect(result.facts.quantity).toEqual(
+      expect.objectContaining({ value: null, supported: false }),
+    );
   }, 30_000);
 });
