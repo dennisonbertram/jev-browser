@@ -1273,7 +1273,11 @@
 
   window.__jevFast = {
     installed: true,
-    frameId: window.__jevFrameId || "",
+    // Read live, not fixed at install: the engine outlives the connection
+    // that installed it, and a second attachment names this frame anew.
+    get frameId() {
+      return window.__jevFrameId || "";
+    },
     nodes: nodes,
     guard: function (index) {
       return guardFor(index);
