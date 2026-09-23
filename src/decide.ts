@@ -186,11 +186,11 @@ function validateChoice(
 ): ChoiceAnswer {
   const a = answer as (Partial<ChoiceAnswer> & { type?: string }) | undefined;
   if (!a || a.type !== "choice")
-    throw new Error(`${label}: malformed or missing answer`);
+    throw new InvalidAnswer(`${label}: malformed or missing answer`);
   const { choice, confidence, probabilities } = a;
   const criteriaKeys = Object.keys(criteria);
   if (typeof choice !== "string" || !criteriaKeys.includes(choice)) {
-    throw new Error(
+    throw new InvalidAnswer(
       `${label}: chosen key "${String(choice)}" is not among the offered criteria`
     );
   }
@@ -200,7 +200,7 @@ function validateChoice(
     probKeys.length !== criteriaKeys.length ||
     !criteriaKeys.every((k) => probKeys.includes(k))
   ) {
-    throw new Error(
+    throw new InvalidAnswer(
       `${label}: probability keys do not match the offered criteria`
     );
   }
@@ -210,16 +210,16 @@ function validateChoice(
       (n) => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1
     )
   ) {
-    throw new Error(
+    throw new InvalidAnswer(
       `${label}: confidence or a probability is not a finite number in [0, 1]`
     );
   }
   const sum = Object.values(probs).reduce((a2, b) => a2 + b, 0);
   if (Math.abs(sum - 1) > 0.02)
-    throw new Error(`${label}: probabilities sum to ${sum}, not ~1`);
+    throw new InvalidAnswer(`${label}: probabilities sum to ${sum}, not ~1`);
   const max = Math.max(...Object.values(probs));
   if (probs[choice] !== max)
-    throw new Error(`${label}: chosen key is not the max-probability option`);
+    throw new InvalidAnswer(`${label}: chosen key is not the max-probability option`);
   return {
     choice,
     confidence: confidence as number,
@@ -257,7 +257,26 @@ export async function postTypeSafe(
   }
 }
 
+/**
+ * One classifier decision. An answer that fails validation, such as a choice
+ * that is not its own most probable option, is asked for once more: on
+ * Elsewhere a single such answer ended a whole task with an error.
+ */
 export async function decide(
+  ...args: Parameters<typeof decideOnce>
+): Promise<Decision> {
+  try {
+    return await decideOnce(...args);
+  } catch (error) {
+    if (!(error instanceof InvalidAnswer) || args[4]?.aborted) throw error;
+    return decideOnce(...args);
+  }
+}
+
+/** An answer from the classifier that does not satisfy its own contract. */
+class InvalidAnswer extends Error {}
+
+async function decideOnce(
   observation: PageObservation,
   goal: string,
   history: HistoryEntry[],
@@ -407,7 +426,7 @@ export async function decide(
   const targetMap = space.targets[operation]!;
   const action = targetMap[targetResult.choice];
   if (!action)
-    throw new Error(
+    throw new InvalidAnswer(
       `${headKey}: chosen target "${targetResult.choice}" is not in the candidate set`
     );
 
