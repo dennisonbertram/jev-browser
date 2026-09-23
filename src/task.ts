@@ -162,6 +162,8 @@ export async function runTask(
   const derivations = [...(plan.derive ?? [])];
   // Blocked steps, to check at the end whether a later plan recovered them.
   const unrecovered: { result: SubgoalResult; planned: Subgoal }[] = [];
+  // The end conditions each recorded step had, filled in where possible.
+  const conditions = new Map<SubgoalResult, string[]>();
 
   // A fact read again under the same name with a different value is a
   // conflict: a later step changed what an earlier one verified.
@@ -180,17 +182,43 @@ export async function runTask(
   // A blocked step is a surprise: the rest of the task is planned again from
   // the page as it is now, knowing what is done and what failed. Bounded, so
   // a task that cannot be done ends.
-  const blocked = async (planned: Subgoal, index: number) => {
+  const blocked = async (planned: Subgoal, index: number, ran = false) => {
     const failed = subgoals[subgoals.length - 1]!;
+    const filled = resolve(planned, facts);
+    if (!conditions.has(failed))
+      conditions.set(failed, filled.subgoal.done_when);
+    if (cut()) {
+      unrecovered.push({ result: failed, planned });
+      stopped = true;
+      return;
+    }
+    const page = await observe(context, { diagnostics: false });
+    // One more look first: the page may have done it by now. On Peek the
+    // calendar was already on October when the check gave up, and the
+    // re-plan went on to November.
+    // Only for a step that ran: one that found nothing to choose, or lacked
+    // a value, never did its work.
+    if (ran && filled.unknown.length === 0) {
+      const check = await endCondition(
+        page,
+        filled.subgoal.done_when,
+        stop,
+      ).catch(unlessCut({ holds: false, scores: [] as number[] }));
+      if (check.holds) {
+        failed.status = "done";
+        failed.reason = "the end condition holds after all";
+        return;
+      }
+    }
     unrecovered.push({ result: failed, planned });
     if (replans.length >= MAX_REPLANS || cut()) {
       stopped = true;
       return;
     }
-    const page = await observe(context, { diagnostics: false });
     const next = await makePlan(task, page, now, stop, {
       plan_so_far: subgoals.map((subgoal) => ({
         goal: subgoal.goal,
+        done_when: conditions.get(subgoal) ?? [],
         status: subgoal.status,
         reason: subgoal.reason,
       })),
@@ -306,6 +334,7 @@ export async function runTask(
         .length,
     };
     subgoals.push(record);
+    conditions.set(record, subgoal.done_when);
     // A pure reading step: its end conditions only say that something is
     // shown, naming no value, and it did nothing but wait or ended with the
     // classifier judging the goal done. Its facts decide it. A step that
@@ -320,7 +349,7 @@ export async function runTask(
       result.status !== "done" &&
       (subgoal.collect.length === 0 || cut() || !reading)
     ) {
-      await blocked(planned, index);
+      await blocked(planned, index, true);
       continue;
     }
     if (subgoal.collect.length > 0) {
@@ -342,7 +371,7 @@ export async function runTask(
           record.status = "done";
           record.reason = "every fact it reads is on the page";
         } else {
-          await blocked(planned, index);
+          await blocked(planned, index, true);
           continue;
         }
       }
@@ -405,10 +434,24 @@ export async function runTask(
       }
     }
     derive(derivations, facts);
-    // A blocked step counts as recovered only when its end condition holds
-    // on the final page; a later plan that ends elsewhere does not excuse it.
+    // A blocked step counts as recovered when a later step reached the same
+    // end condition, or when it holds on the final page; a later plan that
+    // ends elsewhere does not excuse it.
+    const reached = new Set(
+      subgoals
+        .filter((subgoal) => subgoal.status === "done")
+        .flatMap((subgoal) => conditions.get(subgoal) ?? [])
+        .map(normalise),
+    );
     for (const { planned } of unrecovered) {
       const { subgoal, unknown } = resolve(planned, facts);
+      if (
+        unknown.length === 0 &&
+        subgoal.done_when.every((statement) =>
+          reached.has(normalise(statement)),
+        )
+      )
+        continue;
       if (unknown.length > 0) {
         recovered = false;
         break;
@@ -760,7 +803,7 @@ async function makePlan(
         ...base,
         previous_plan: plan,
         problem:
-          'These done_when statements cannot be confirmed by one yes/no check of the page as it is now: they compare with an earlier state the checker never sees, they rank options (earliest, cheapest, highest), which one check cannot do, or they name a widget state (open, closed, expanded, hidden), which the page text does not state. Rewrite each as the content the page shows once the subgoal is done, for example "a calendar showing October 2026 is visible" or "a date in October 2026 is selected". Use choose for a ranking. Return the whole corrected plan.',
+          'These done_when statements cannot be confirmed by one yes/no check of the page as it is now: they compare with an earlier state the checker never sees or name a date relative to today (next month, this weekend, tomorrow) instead of the date itself, they rank options (earliest, cheapest, highest), which one check cannot do, or they name a widget state (open, closed, expanded, hidden), which the page text does not state. Rewrite each as the content the page shows once the subgoal is done, for example "a calendar showing October 2026 is visible" or "a date in October 2026 is selected". Use choose for a ranking. Return the whole corrected plan.',
         statements: relative,
       },
       { model: process.env.PLANNER_MODEL, signal },
@@ -799,7 +842,7 @@ function planningView(page: PageObservation) {
  * calendar open).
  */
 const UNCHECKABLE =
-  /\b(?:current(?:ly)?|previous(?:ly)?|original(?:ly)?|earlier than|later than|than before|than it (?:did|was|had)|has changed|have changed|no longer|compared (?:to|with)|earliest|latest|cheapest|least expensive|most expensive|lowest|highest|highest-rated|best|is (?:now )?(?:open|opened|closed|expanded|collapsed|active|hidden|dismissed|gone))\b/iu;
+  /\b(?:current(?:ly)?|previous(?:ly)?|original(?:ly)?|earlier than|later than|than before|than it (?:did|was|had)|has changed|have changed|no longer|compared (?:to|with)|earliest|latest|cheapest|least expensive|most expensive|lowest|highest|highest-rated|best|is (?:now )?(?:open|opened|closed|expanded|collapsed|active|hidden|dismissed|gone)|(?:next|this|last) (?:day|week|weekend|month|year)|tomorrow|yesterday)\b/iu;
 
 function parsePlan(json: Record<string, unknown>): TaskPlan | null {
   const strings = (value: unknown, max: number) =>

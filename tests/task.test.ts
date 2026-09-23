@@ -29,7 +29,7 @@ type Stubs = {
   /** The plan the planner returns. */
   plan: unknown;
   /** Operation the classifier prefers when offered. */
-  operation: "CLICK" | "DONE" | "WAIT";
+  operation: "CLICK" | "DONE" | "WAIT" | "BLOCKED";
   /** Whether one end-condition statement holds for this page text. */
   holds: (statement: string, pageText: string) => boolean;
   /** Facts the extractor returns, or a function of the page text. */
@@ -2080,5 +2080,161 @@ describe("fixes from the reviews of steps 4 and 5", () => {
     expect(result.facts.v?.value).toBe("11:30 AM");
     expect(result.conflicts).toEqual([]);
     expect(result.status).toBe("done");
+  }, 60_000);
+
+  it("sends back an end condition relative to today, like next month", async () => {
+    const stub = stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "month",
+            goal: "Go to next month",
+            done_when: ["Next month calendar is displayed"],
+            collect: [],
+          },
+        ],
+        report: [],
+      },
+      repair: {
+        subgoals: [
+          {
+            id: "month",
+            goal: "Go to next month",
+            done_when: ["October 2026 is shown"],
+            collect: [],
+          },
+        ],
+        report: [],
+      },
+      operation: "CLICK",
+      holds: () => true,
+    });
+    const { context, tab } = await page(`<button>Next</button>`);
+    const result = await runTask(tab, { task: "Open next month." });
+    await context.close();
+
+    expect(stub.planCalls()).toBe(2);
+    expect(result.plan.subgoals[0]!.done_when).toEqual([
+      "October 2026 is shown",
+    ]);
+  }, 60_000);
+
+  it("checks a blocked step once more before planning around it", async () => {
+    // A page that had already done it: on Peek the calendar was on October
+    // when the check gave up, and the re-plan went on to November.
+    let checks = 0;
+    const stub = stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "month",
+            goal: "Go to next month",
+            done_when: ["October 2026 is shown"],
+            collect: [],
+          },
+        ],
+        report: [],
+      },
+      operation: "DONE",
+      // Three checks inside the run say no; the next one says yes.
+      holds: () => ++checks > 3,
+    });
+    const { context, tab } = await page(`<button>Next</button>`);
+    const result = await runTask(tab, { task: "Open next month." });
+    await context.close();
+
+    expect(stub.planCalls()).toBe(1);
+    expect(result.subgoals[0]).toEqual(
+      expect.objectContaining({
+        status: "done",
+        reason: "the end condition holds after all",
+      }),
+    );
+    expect(result.status).toBe("done");
+  }, 60_000);
+
+  it("counts a blocked step recovered when a later step reaches the same end condition", async () => {
+    // A picker opened on the second try is closed again by the end, as it
+    // should be; its step is still recovered.
+    const seen = new Map<string, number>();
+    const stub = stubModels({
+      plan: {},
+      plans: [
+        {
+          subgoals: [
+            {
+              id: "open",
+              goal: "Open the picker",
+              done_when: ["The picker is visible"],
+              collect: [],
+            },
+          ],
+          report: [],
+        },
+        {
+          subgoals: [
+            {
+              id: "open",
+              goal: "Open the picker again",
+              done_when: ["The picker is visible"],
+              collect: [],
+            },
+          ],
+          report: [],
+        },
+      ],
+      operation: "CLICK",
+      operations: ["BLOCKED", "CLICK"],
+      holds: (statement) => {
+        const n = (seen.get(statement) ?? 0) + 1;
+        seen.set(statement, n);
+        // Blocked run: 1 check; recheck: 2; second step: 3 holds; final: 4 no.
+        return n === 3;
+      },
+    });
+    const { context, tab } = await page(`<button>Open</button>`);
+    const result = await runTask(tab, { task: "Open the picker." });
+    await context.close();
+
+    expect(stub.planCalls()).toBe(2);
+    expect(result.subgoals.map((s) => s.status)).toEqual(["blocked", "done"]);
+    expect(result.status).toBe("done");
+  }, 60_000);
+
+  it("shows a re-plan each earlier step's end conditions", async () => {
+    const stub = stubModels({
+      plan: {},
+      plans: [
+        {
+          subgoals: [
+            {
+              id: "a",
+              goal: "Do it",
+              done_when: ["October 2026 is shown"],
+              collect: [],
+            },
+          ],
+          report: [],
+        },
+        {
+          subgoals: [
+            { id: "b", goal: "Finish", done_when: ["Finished"], collect: [] },
+          ],
+          report: [],
+        },
+      ],
+      operation: "BLOCKED",
+      holds: () => false,
+    });
+    const { context, tab } = await page(`<button>Go</button>`);
+    await runTask(tab, { task: "Do it." });
+    await context.close();
+
+    expect(stub.planRequests[1]!.plan_so_far).toEqual([
+      expect.objectContaining({
+        done_when: ["October 2026 is shown"],
+        status: "blocked",
+      }),
+    ]);
   }, 60_000);
 });
