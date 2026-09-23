@@ -1995,29 +1995,34 @@ describe("fixes from the reviews of steps 4 and 5", () => {
   }, 60_000);
 
   it("tells morning from evening, and one thousand from 1,000", async () => {
+    // The page changes from the first value to the second after it is read.
     for (const [first, second, differ] of [
       ["9:00 AM", "9:00 PM", true],
       ["$1,000", "$1000", false],
       ["$10.50", "$50.10", true],
     ] as const) {
-      let reads = 0;
+      const now = (text: string) =>
+        text.includes(second) && !text.includes(first) ? second : first;
       stubModels({
         plan: {
           subgoals: [
             { id: "a", goal: "Show", done_when: ["Shown"], collect: ["v"] },
+            {
+              id: "b",
+              goal: "Click Change",
+              done_when: ["Changed"],
+              collect: [],
+            },
           ],
           report: ["v"],
         },
         operation: "CLICK",
-        holds: () => true,
-        facts: () => {
-          reads += 1;
-          const value = reads === 1 ? first : second;
-          return { v: { value, quote: value } };
-        },
+        holds: (statement, text) =>
+          statement !== "Changed" || now(text) === second,
+        facts: (text) => ({ v: { value: now(text), quote: now(text) } }),
       });
       const { context, tab } = await page(
-        `<p>9:00 AM 9:00 PM $1,000 $1000 $10.50 $50.10</p><button>Go</button>`,
+        `<p id="v">${first}</p><button onclick="document.getElementById('v').textContent = '${second}'">Change</button>`,
       );
       const result = await runTask(tab, { task: "Show v." });
       await context.close();
@@ -2236,5 +2241,43 @@ describe("fixes from the reviews of steps 4 and 5", () => {
         status: "blocked",
       }),
     ]);
+  }, 60_000);
+
+  it("does not call a verified value gone while its quote is still on the page", async () => {
+    // On Peek, with the calendar open, the extractor missed the selected
+    // date in three calls of five although the page still showed it.
+    let reads = 0;
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "a",
+            goal: "Show",
+            done_when: ["Shown"],
+            collect: ["selected_date"],
+          },
+        ],
+        report: ["selected_date"],
+      },
+      operation: "CLICK",
+      holds: () => true,
+      facts: () =>
+        ++reads === 1
+          ? {
+              selected_date: {
+                value: "October 3, 2026",
+                quote: "October 3, 2026",
+              },
+            }
+          : { selected_date: { value: "", quote: "" } },
+    });
+    const { context, tab } = await page(
+      `<p>October 3, 2026</p><button>Go</button>`,
+    );
+    const result = await runTask(tab, { task: "Pick October 3." });
+    await context.close();
+
+    expect(result.conflicts).toEqual([]);
+    expect(result.status).toBe("done");
   }, 60_000);
 });

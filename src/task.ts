@@ -166,16 +166,17 @@ export async function runTask(
   const conditions = new Map<SubgoalResult, string[]>();
 
   // A fact read again under the same name with a different value is a
-  // conflict: a later step changed what an earlier one verified.
-  const keep = (name: string, fact: Fact) => {
+  // conflict: a later step changed what an earlier one verified. Unless the
+  // page still shows what was verified: then the new reading is the one in
+  // doubt, and the verified fact stands.
+  const keep = (name: string, fact: Fact, observation: PageObservation) => {
     const earlier = facts[name];
     if (earlier?.supported && !fact.supported) return;
-    if (
-      earlier?.supported &&
-      fact.supported &&
-      !sameValue(earlier.value!, fact.value!)
-    )
+    if (earlier?.supported && fact.supported) {
+      if (sameValue(earlier.value!, fact.value!)) return;
+      if (stillShown(earlier, observation)) return;
       conflicts.push({ name, earlier: earlier.value!, final: fact.value! });
+    }
     facts[name] = fact;
   };
 
@@ -280,7 +281,7 @@ export async function runTask(
         );
         if (picked.picked || stop.aborted) break;
       }
-      if (picked.picked) keep(choice.name, picked.picked);
+      if (picked.picked) facts[choice.name] = picked.picked;
       else {
         subgoals.push({
           id: planned.id,
@@ -362,7 +363,7 @@ export async function runTask(
         subgoal.id,
         stop,
       ).catch(unlessCut({} as Record<string, Fact>));
-      for (const [name, fact] of Object.entries(read)) keep(name, fact);
+      for (const [name, fact] of Object.entries(read)) keep(name, fact, page);
       // A step that reads is checked by what it reads: each fact is kept
       // only with a quote from the page. On Peek the planner kept waiting
       // for "the start times list" beside the one start time there was.
@@ -423,6 +424,11 @@ export async function runTask(
           const earlier = facts[name]!.value!;
           const now = read[name];
           if (now?.supported && sameValue(earlier, now.value!)) continue;
+          // The page still shows what was verified: a reading that missed it
+          // or saw something else is not evidence that it changed. On Peek,
+          // with the calendar open, the extractor missed the selected date in
+          // three calls of five.
+          if (stillShown(facts[name]!, page)) continue;
           // Gone from the page it was read on is a change too.
           conflicts.push({
             name,
@@ -1098,6 +1104,14 @@ function shows(quote: string, value: string): boolean {
     shown.words.every((word) =>
       said.words.some((candidate) => candidate.startsWith(word)),
     )
+  );
+}
+
+/** Whether the page still shows the quote a fact was verified by. */
+function stillShown(fact: Fact, observation: PageObservation): boolean {
+  if (!fact.quote) return false;
+  return evidence(observation, pageState(observation).controls).includes(
+    normalise(fact.quote),
   );
 }
 
