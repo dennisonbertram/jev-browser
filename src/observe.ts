@@ -371,6 +371,18 @@ export async function observe(
     });
   }
 
+  // Waiting is always an option. The classifier knew the WAIT operation and
+  // the executor could carry it out, but nothing ever offered one, so a page
+  // still loading its results left only the choice between clicking
+  // something and giving up. It targets no element, so it needs no guard.
+  actions.push({
+    id: "wait",
+    kind: "wait",
+    label: "Wait for the page to finish updating",
+    value: "1500",
+    guard: "wait",
+  });
+
   const observation: PageObservation = {
     url: active.url(),
     title: await active.title().catch(() => ""),

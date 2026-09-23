@@ -17,6 +17,15 @@
 
 // The loop
 export { run, runOnce } from "./run.js";
+export { runTask } from "./task.js";
+export type {
+  Fact,
+  Subgoal,
+  SubgoalResult,
+  TaskOptions,
+  TaskPlan,
+  TaskResult,
+} from "./task.js";
 export type { HistoryEntry as RunStep, RunOptions, RunResult } from "./run.js";
 
 // Observation, decision, execution

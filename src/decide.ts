@@ -198,7 +198,7 @@ function validateChoice(
   };
 }
 
-async function postTypeSafe(body: unknown): Promise<{
+export async function postTypeSafe(body: unknown): Promise<{
   answers: Record<string, unknown>;
   usage?: { input_tokens: number; output_tokens: number };
 }> {
@@ -503,4 +503,68 @@ async function fieldTextOnce(
     );
   }
   return { value, model, latencyMs };
+}
+
+/**
+ * One JSON answer from the text model, for callers that need more than a
+ * field value: the task planner and the fact extractor.
+ *
+ * `PLANNER_MODEL` overrides the model for planning, where a stronger model
+ * than the field-value one may pay off; everything else uses `TEXT_MODEL`.
+ * A malformed answer is asked again, twice, as for field values.
+ */
+export async function textJson(
+  system: string,
+  user: unknown,
+  options: { model?: string } = {}
+): Promise<{ json: Record<string, unknown>; latencyMs: number }> {
+  const token = process.env.TEXT_MODEL_API_KEY;
+  if (!token) throw new Error("TEXT_MODEL_API_KEY is not set.");
+  const model = options.model ?? process.env.TEXT_MODEL ?? "gpt-4.1-nano";
+  let last: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const start = performance.now();
+    try {
+      const res = await fetch(TEXT_URL, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: Number(process.env.TEXT_MODEL_MAX_TOKENS ?? 4000),
+          ...(process.env.TEXT_MODEL_REASONING_EFFORT
+            ? { reasoning_effort: process.env.TEXT_MODEL_REASONING_EFFORT }
+            : {}),
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: JSON.stringify(user) },
+          ],
+        }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      if (!res.ok)
+        throw new Error(`Text gateway request failed with status ${res.status}`);
+      const raw = (await res.json())?.choices?.[0]?.message?.content;
+      if (typeof raw !== "string" || raw.trim() === "")
+        throw new Error("the text model returned no content");
+      const parsed: unknown = JSON.parse(raw);
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+        throw new Error("the text model's JSON was not an object");
+      return {
+        json: parsed as Record<string, unknown>,
+        latencyMs: Math.round(performance.now() - start),
+      };
+    } catch (error) {
+      last = error;
+      if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 250));
+    }
+  }
+  throw new Error(
+    `The text model gave no usable answer after three attempts: ${
+      last instanceof Error ? last.message : "unknown error"
+    }`
+  );
 }

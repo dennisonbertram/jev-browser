@@ -27,6 +27,9 @@ const MAX_DECISIONS = MAX_ACTIONS * 2;
 // deciding it has nothing to act on. A slow single-page app usually needs
 // one or two seconds.
 const EMPTY_PAGE_WAIT_MS = 5_000;
+// How long results that load after an action are waited for, when the run
+// has an end condition to check.
+const CONDITION_WAIT_MS = 2_000;
 
 export type HistoryEntry = {
   step: number;
@@ -73,6 +76,13 @@ export type RunOptions = {
    * with "the browser stopped responding". Default 15 s.
    */
   browserTimeoutMs?: number;
+  /**
+   * The goal's end condition, checked against the page. When given, the run
+   * ends as soon as it holds, and the classifier's DONE is only a claim: it
+   * is refused when this says otherwise. Without it, DONE is accepted as
+   * before.
+   */
+  isDone?: (observation: PageObservation) => Promise<boolean>;
 };
 
 /**
@@ -136,6 +146,11 @@ function oscillating(history: HistoryEntry[]): boolean {
   return false;
 }
 
+/** Whether the page offers any control, not counting the always-present WAIT. */
+function offersSomething(observation: PageObservation): boolean {
+  return observation.actions.some((action) => action.kind !== "wait");
+}
+
 export async function run(
   target: BrowserTarget,
   options: RunOptions
@@ -181,6 +196,9 @@ export async function run(
   const usage = { input_tokens: 0, output_tokens: 0, text_calls: 0 };
 
   let hung = false;
+  let checkedFingerprint: string | undefined;
+  let conditionMet = false;
+  let refusedClaims = 0;
   try {
     observation = await look();
     while (status === "ready") {
@@ -197,17 +215,25 @@ export async function run(
       // empty table, the classifier answered BLOCKED in 0.3 s on three real
       // sites that were still loading.
       const waitUntil = performance.now() + EMPTY_PAGE_WAIT_MS;
-      while (
-        observation.actions.length === 0 &&
-        performance.now() < waitUntil
-      ) {
+      while (!offersSomething(observation) && performance.now() < waitUntil) {
         await new Promise((resolve) => setTimeout(resolve, 400));
         observation = await look();
       }
-      if (observation.actions.length === 0) {
+      if (!offersSomething(observation)) {
         status = "blocked";
         reason = "the page has nothing to act on";
         break;
+      }
+
+      // The end condition is checked on every new page state, so the run
+      // stops the moment it holds rather than when the classifier notices.
+      if (options.isDone && checkedFingerprint !== observation.fingerprint) {
+        checkedFingerprint = observation.fingerprint;
+        if (await options.isDone(observation)) {
+          status = "done";
+          reason = "the end condition is met";
+          break;
+        }
       }
 
       const decision = await decide(observation, goal, history, answers);
@@ -219,6 +245,48 @@ export async function run(
         // A terminal choice is only accepted against the page it was made on.
         if (!(await stillFresh(observation))) {
           observation = await look();
+          continue;
+        }
+        // DONE is a claim. With an end condition to check, a claim the page
+        // does not support is refused and recorded, so the classifier sees
+        // that it was wrong; a second refusal ends the run. On Peek, the
+        // classifier declared done with the calendar still open and no start
+        // times on the page.
+        if (decision.operation === "DONE" && options.isDone) {
+          // A claim gets a fresh check. The one before this decision may have
+          // run while the page was still settling, and a purely visual change
+          // leaves the fingerprint as it was, so nothing else re-checks it.
+          if (await options.isDone(observation)) {
+            status = "done";
+            reason = "the end condition is met";
+            break;
+          }
+          refusedClaims += 1;
+          if (refusedClaims >= 2) {
+            status = "blocked";
+            reason =
+              "the classifier claimed done, but the end condition is not met";
+            break;
+          }
+          const refusal: HistoryEntry = {
+            step: history.length + 1,
+            action: "Declared the goal done, but the page does not show it yet",
+            kind: "wait",
+            choice: decision.choice,
+            operation: decision.operation,
+            target: decision.target,
+            confidence: decision.confidence,
+            probability: 0,
+            text: null,
+            latencyMs: decision.latencyMs,
+            textLatencyMs: 0,
+            pageChanged: false,
+            url: observation.url,
+            elapsedMs: since(),
+            usage: decision.usage,
+          };
+          history.push(refusal);
+          options.onStep?.(refusal);
           continue;
         }
         status = decision.operation === "DONE" ? "done" : "blocked";
@@ -369,9 +437,38 @@ export async function run(
       );
       observation = await look();
       entry.pageChanged = observation.fingerprint !== before.fingerprint;
+
+      // Results that load after the action. Peek fetches a date's start
+      // times over the network once the date is clicked; the end condition
+      // was checked before they arrived, and the next action reopened the
+      // calendar over them. Waiting for the page to go quiet does not help:
+      // it is often quiet right up to the moment the results land. So the
+      // end condition gets a short, fixed window, re-checked each time the
+      // page changes.
+      // ponytail: a fixed window costs up to CONDITION_WAIT_MS on steps that
+      // do not finish the subgoal; a network-idle signal would be tighter.
+      if (options.isDone) {
+        const until = performance.now() + CONDITION_WAIT_MS;
+        let met = await options.isDone(observation);
+        checkedFingerprint = observation.fingerprint;
+        while (!met && performance.now() < until) {
+          await new Promise((resolve) => setTimeout(resolve, 400));
+          observation = await look();
+          if (observation.fingerprint === checkedFingerprint) continue;
+          checkedFingerprint = observation.fingerprint;
+          met = await options.isDone(observation);
+        }
+        if (met) conditionMet = true;
+      }
       entry.url = observation.url;
       entry.elapsedMs = since();
       options.onStep?.(entry);
+
+      if (conditionMet) {
+        status = "done";
+        reason = "the end condition is met";
+        break;
+      }
 
       const recent = history.slice(-3);
       const stuck =
