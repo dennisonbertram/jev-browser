@@ -2051,4 +2051,34 @@ describe("fixes from the reviews of steps 4 and 5", () => {
     expect(took).toBeLessThan(6_000);
     expect(result.status).toBe("incomplete");
   }, 60_000);
+
+  it("reads a fact a second time before taking it as missing", async () => {
+    // On Peek's final page the extractor returned every field empty in one
+    // call of five on identical input.
+    let reads = 0;
+    stubModels({
+      plan: {
+        subgoals: [
+          { id: "a", goal: "Show", done_when: ["Shown"], collect: ["v"] },
+        ],
+        report: ["v"],
+      },
+      operation: "CLICK",
+      holds: () => true,
+      facts: () => {
+        reads += 1;
+        // Read once, then the final check's reading comes back empty.
+        return reads === 2
+          ? { v: { value: "", quote: "" } }
+          : { v: { value: "11:30 AM", quote: "11:30 AM" } };
+      },
+    });
+    const { context, tab } = await page(`<p>11:30 AM</p><button>Go</button>`);
+    const result = await runTask(tab, { task: "Show v." });
+    await context.close();
+
+    expect(result.facts.v?.value).toBe("11:30 AM");
+    expect(result.conflicts).toEqual([]);
+    expect(result.status).toBe("done");
+  }, 60_000);
 });

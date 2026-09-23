@@ -326,7 +326,7 @@ export async function runTask(
     if (subgoal.collect.length > 0) {
       const page = await observe(context, { diagnostics: false });
       // Cancelled while reading, the task still returns what it has.
-      const read = await extractFacts(
+      const read = await readTwice(
         task,
         subgoal.collect,
         page,
@@ -380,7 +380,7 @@ export async function runTask(
       );
     });
     if (unread.length + recheck.length > 0) {
-      const read = await extractFacts(
+      const read = await readTwice(
         task,
         [...unread, ...recheck],
         page,
@@ -940,6 +940,27 @@ async function endCondition(
     return typeof answer?.noul === "number" ? answer.noul : 0;
   });
   return { holds: scores.every((score) => score >= HOLDS), scores };
+}
+
+/**
+ * Facts read from a page, with a second reading of any field the first one
+ * missed. On Peek's final page the extractor returned every field empty in
+ * one call of five on identical input, which made a verified date look gone.
+ */
+async function readTwice(
+  task: string,
+  fields: string[],
+  observation: PageObservation,
+  subgoal: string,
+  signal?: AbortSignal,
+): Promise<Record<string, Fact>> {
+  const read = await extractFacts(task, fields, observation, subgoal, signal);
+  const again = fields.filter((name) => !read[name]?.supported);
+  if (again.length === 0) return read;
+  const second = await extractFacts(task, again, observation, subgoal, signal);
+  for (const name of again)
+    if (second[name]?.supported) read[name] = second[name]!;
+  return read;
 }
 
 const EXTRACTOR_SYSTEM = [
