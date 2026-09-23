@@ -70,6 +70,8 @@ export type Fact = {
   url: string;
   /** For a chosen option, the value it was compared by, such as its full date. */
   detail?: string;
+  /** What the model offered when the page did not support it. */
+  rejected?: { value: string; quote: string };
 };
 
 export type SubgoalResult = {
@@ -867,6 +869,7 @@ async function extractFacts(
       supported,
       subgoal,
       url: observation.url,
+      ...(!supported && value !== "" && { rejected: { value, quote } }),
     };
   }
   return facts;

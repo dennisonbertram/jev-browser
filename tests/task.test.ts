@@ -345,6 +345,10 @@ describe("the whole-task runner", () => {
     expect(result.facts.price).toEqual(
       expect.objectContaining({ value: null, supported: false }),
     );
+    // What the model offered is kept aside, so a refusal can be explained.
+    expect(result.facts.price?.rejected).toEqual(
+      expect.objectContaining({ value: expect.any(String) }),
+    );
   }, 30_000);
 
   it("accepts a fact quoted from a form control, not only from page text", async () => {
