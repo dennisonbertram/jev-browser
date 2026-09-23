@@ -35,6 +35,8 @@ type Stubs = {
   facts?: Record<string, { value: string; quote: string }>;
   /** What the planner returns when asked to repair its plan. */
   repair?: unknown;
+  /** Delay before the extractor answers, honouring the request's signal. */
+  extractDelayMs?: number;
 };
 
 /** Route each model request to a deterministic answer. */
@@ -88,6 +90,14 @@ function stubModels(stubs: Stubs): { classifierCalls: () => number } {
       });
     }
     const system = String(body.messages?.[0]?.content ?? "");
+    if (stubs.extractDelayMs && system.includes("You extract"))
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, stubs.extractDelayMs);
+        init?.signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(init.signal?.reason ?? new Error("aborted"));
+        });
+      });
     const planning = system.includes("You plan");
     if (planning) planCalls += 1;
     const content = planning
@@ -697,5 +707,45 @@ describe("the whole-task runner", () => {
 
     // Only strings: a value that is not text is not something to type.
     expect(result.plan.subgoals[0]!.inputs).toEqual({ destination: "London" });
+  }, 30_000);
+
+  it("returns what it has when cancelled while reading facts", async () => {
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "times",
+            goal: "Show the available times",
+            done_when: ["Start times are shown on the page"],
+            collect: ["price"],
+          },
+        ],
+        report: ["price"],
+      },
+      operation: "CLICK",
+      holds: (_statement, text) => text.includes("Times:"),
+      extractDelayMs: 10_000,
+    });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(TIMES_PAGE);
+    const controller = new AbortController();
+
+    const pending = runTask(page, {
+      task: "Show me the tour's price.",
+      signal: controller.signal,
+    });
+    await page.waitForFunction(() =>
+      document.body.innerText.includes("Times:"),
+    );
+    setTimeout(() => controller.abort(), 1_500);
+    const result = await pending;
+    await context.close();
+
+    expect(result.status).toBe("incomplete");
+    expect(result.subgoals[0]).toEqual(
+      expect.objectContaining({ status: "done" }),
+    );
+    expect(result.missing).toEqual(["price"]);
   }, 30_000);
 });

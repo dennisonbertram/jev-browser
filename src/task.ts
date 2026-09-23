@@ -127,9 +127,9 @@ export async function runTask(
       inputs: subgoal.inputs,
       signal: options.signal,
       deadlineAt,
-      isDone: async (observation) =>
-        (await endCondition(observation, subgoal.done_when, options.signal))
-          .holds,
+      // The run's own signal, which also fires when the budget runs out.
+      isDone: async (observation, signal) =>
+        (await endCondition(observation, subgoal.done_when, signal)).holds,
       onStep: (entry) => options.onStep?.(subgoal.id, entry),
     });
     subgoals.push({
@@ -148,13 +148,17 @@ export async function runTask(
     }
     if (subgoal.collect.length > 0) {
       const page = await observe(context, { diagnostics: false });
+      // Cancelled while reading, the task still returns what it has.
       const read = await extractFacts(
         task,
         subgoal.collect,
         page,
         subgoal.id,
         options.signal,
-      );
+      ).catch((error: unknown) => {
+        if (options.signal?.aborted) return {};
+        throw error;
+      });
       for (const [name, fact] of Object.entries(read)) {
         // A supported value is never replaced by an unsupported one.
         if (!facts[name]?.supported || fact.supported) facts[name] = fact;

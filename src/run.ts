@@ -82,7 +82,11 @@ export type RunOptions = {
    * is refused when this says otherwise. Without it, DONE is accepted as
    * before.
    */
-  isDone?: (observation: PageObservation) => Promise<boolean>;
+  isDone?: (
+    observation: PageObservation,
+    /** Aborts when the run stops; a check should abandon its work then. */
+    signal?: AbortSignal,
+  ) => Promise<boolean>;
   /**
    * Stops the run. No new model call, observation or action starts after it
    * aborts, and a model request in flight is abandoned; a browser action
@@ -109,6 +113,7 @@ export type RunOptions = {
  * a context of its own.
  */
 const BROWSER_TIMEOUT_MS = 15_000;
+const MAX_WAITS = 8;
 
 class BrowserTimeout extends Error {}
 
@@ -189,9 +194,11 @@ export async function run(
     bounded(fresh(context, seen, action), limit);
   // A met condition counts only if the page it was checked on is still the
   // page: the check is a model call, and the page can move while it runs.
+  // A check that answers after the run stopped does not count.
   const holds = async (seen: PageObservation) =>
     options.isDone !== undefined &&
-    (await options.isDone(seen)) &&
+    (await Promise.race([options.isDone(seen, stop.signal), stopped])) &&
+    !stop.signal.aborted &&
     (await stillFresh(seen));
   let observation: PageObservation | undefined;
   let status: "ready" | "done" | "blocked" = "ready";
@@ -233,11 +240,20 @@ export async function run(
           () => stop.abort(new Error("time budget")),
           Math.max(0, options.deadlineAt - Date.now()),
         );
+  // Whichever stopped the run first names it.
   const stopReason = () =>
-    options.signal?.aborted
+    (stop.signal.reason as Error | undefined)?.message === "cancelled"
       ? "the run was cancelled"
       : "the time budget ran out";
-  let idleWaits = 0;
+  // Rejects when the run stops, so no awaited check outlives the budget.
+  const stopped = new Promise<never>((_, reject) => {
+    if (stop.signal.aborted) reject(stop.signal.reason);
+    stop.signal.addEventListener("abort", () => reject(stop.signal.reason), {
+      once: true,
+    });
+  });
+  stopped.catch(() => undefined);
+  let waits = 0;
   try {
     observation = await look();
     while (status === "ready") {
@@ -272,7 +288,11 @@ export async function run(
       // empty table, the classifier answered BLOCKED in 0.3 s on three real
       // sites that were still loading.
       const waitUntil = performance.now() + EMPTY_PAGE_WAIT_MS;
-      while (!offersSomething(observation) && performance.now() < waitUntil) {
+      while (
+        !offersSomething(observation) &&
+        performance.now() < waitUntil &&
+        !stop.signal.aborted
+      ) {
         await new Promise((resolve) => setTimeout(resolve, 400));
         observation = await look();
       }
@@ -452,12 +472,6 @@ export async function run(
         pendingText.clear();
       } catch (error) {
         if (!(error instanceof StalePage)) throw error;
-        staleRetries += 1;
-        if (staleRetries > MAX_STALE_RETRIES) {
-          status = "blocked";
-          reason = "the page kept changing under every attempted action";
-          break;
-        }
         // Input the page interrupted is recorded, not lost. A fill that had
         // already clicked the field and selected its text when the page
         // changed has touched the page; the classifier needs to see that,
@@ -482,6 +496,13 @@ export async function run(
           };
           history.push(interrupted);
           options.onStep?.(interrupted);
+        }
+        // The cap comes after the record, so the last interruption is kept.
+        staleRetries += 1;
+        if (staleRetries > MAX_STALE_RETRIES) {
+          status = "blocked";
+          reason = "the page kept changing under every attempted action";
+          break;
         }
         observation = await look();
         continue;
@@ -555,13 +576,27 @@ export async function run(
       }
 
       // Waiting is exempt from the no-progress rule, so it needs its own
-      // bound: on Peek it waited 18 times over two minutes.
-      if (action.kind === "wait")
-        idleWaits = entry.pageChanged ? 0 : idleWaits + 1;
-      else idleWaits = 0;
-      if (idleWaits >= 3) {
+      // bounds: on Peek it waited 18 times over two minutes. Three waits in a
+      // row that change nothing end the run, and so does a total of
+      // MAX_WAITS, because text that keeps changing elsewhere, such as a
+      // clock, makes every wait look like progress.
+      const lastThree = history.slice(-3);
+      if (
+        lastThree.length === 3 &&
+        lastThree.every(
+          (h) =>
+            h.kind === "wait" &&
+            h.operation !== "DONE" &&
+            h.pageChanged === false,
+        )
+      ) {
         status = "blocked";
         reason = "it waited three times and the page did not change";
+        break;
+      }
+      if (action.kind === "wait" && ++waits >= MAX_WAITS) {
+        status = "blocked";
+        reason = `it waited ${MAX_WAITS} times without finishing`;
         break;
       }
 

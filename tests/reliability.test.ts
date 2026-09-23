@@ -306,3 +306,76 @@ describe("planned inputs", () => {
     expect(typed).toBe("London");
   }, 30_000);
 });
+
+describe("stopping, again", () => {
+  it("does not report success from an end-condition check that finished after the budget", async () => {
+    stubModels({ prefer: "BLOCKED" });
+    const { context, page } = await pageWith("<p>Done</p><button>Go</button>");
+
+    const result = await run(page, {
+      goal: "finish",
+      deadlineAt: Date.now() + 200,
+      // A check that ignores the signal and answers late.
+      isDone: () =>
+        new Promise((resolve) => setTimeout(() => resolve(true), 800)),
+    });
+    await context.close();
+
+    expect(result.reason).toBe("the time budget ran out");
+  }, 15_000);
+
+  it("hands its stop signal to the end-condition check", async () => {
+    stubModels({ prefer: "BLOCKED" });
+    const { context, page } = await pageWith("<button>Go</button>");
+    let aborted = false;
+
+    await run(page, {
+      goal: "finish",
+      deadlineAt: Date.now() + 200,
+      isDone: (_observation, signal) =>
+        new Promise((resolve) => {
+          signal?.addEventListener("abort", () => {
+            aborted = true;
+            resolve(false);
+          });
+        }),
+    });
+    await context.close();
+
+    expect(aborted).toBe(true);
+  }, 15_000);
+
+  it("keeps the reason that stopped it first", async () => {
+    stubModels({ prefer: "CLICK", delayMs: 400 });
+    const { context, page } = await pageWith("<button>Go</button>");
+    const controller = new AbortController();
+    // The budget runs out first; cancellation comes after.
+    setTimeout(() => controller.abort(), 300);
+
+    const result = await run(page, {
+      goal: "go",
+      signal: controller.signal,
+      deadlineAt: Date.now() + 100,
+    });
+    await context.close();
+
+    expect(result.reason).toBe("the time budget ran out");
+  }, 15_000);
+
+  it("caps waiting even when unrelated text keeps changing", async () => {
+    stubModels({ prefer: "WAIT" });
+    const { context, page } = await pageWith(`
+      <p id="clock">00</p><button>Go</button>
+      <script>let n = 10; setInterval(() => {
+        n = n === 99 ? 10 : n + 1; document.getElementById('clock').textContent = String(n);
+      }, 100);</script>`);
+
+    const result = await run(page, { goal: "wait for results" });
+    await context.close();
+
+    expect(result.status).toBe("blocked");
+    expect(
+      result.history.filter((h) => h.kind === "wait").length,
+    ).toBeLessThanOrEqual(8);
+  }, 90_000);
+});
