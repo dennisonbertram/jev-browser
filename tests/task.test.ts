@@ -2280,4 +2280,40 @@ describe("fixes from the reviews of steps 4 and 5", () => {
     expect(result.conflicts).toEqual([]);
     expect(result.status).toBe("done");
   }, 60_000);
+
+  it("reads first in a step that only reads, and does not act when the facts are there", async () => {
+    // On Peek a reading step clicked the date field, which reopened the
+    // calendar over the start times it was meant to read.
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "read",
+            goal: "Wait for the start times list",
+            done_when: ["A list of start times is shown"],
+            collect: ["start_time"],
+          },
+        ],
+        report: ["start_time"],
+      },
+      operation: "CLICK",
+      holds: () => false,
+      facts: (text) =>
+        text.includes("11:30 AM")
+          ? { start_time: { value: "11:30 AM", quote: "11:30 AM" } }
+          : { start_time: { value: "", quote: "" } },
+    });
+    const { context, tab } = await page(
+      `<button onclick="document.getElementById('t').textContent = ''">October 3, 2026</button><p id="t">11:30 AM - 2 Hour(s)</p>`,
+    );
+    const result = await runTask(tab, { task: "Report the start times." });
+    const text = await tab.textContent("#t");
+    await context.close();
+
+    expect(text).toContain("11:30 AM");
+    expect(result.subgoals[0]).toEqual(
+      expect.objectContaining({ status: "done", actions: 0 }),
+    );
+    expect(result.status).toBe("done");
+  }, 60_000);
 });

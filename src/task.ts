@@ -309,6 +309,34 @@ export async function runTask(
       continue;
     }
     const subgoalStarted = performance.now();
+    // A step that only reads reads first, and does not act when every fact
+    // it reads is already quoted from the page. On Peek such a step clicked
+    // the date field, which reopened the calendar over the start times.
+    if (onlyReads(subgoal)) {
+      const page = await observe(context, { diagnostics: false });
+      const read = await readTwice(
+        task,
+        subgoal.collect,
+        page,
+        subgoal.id,
+        stop,
+      ).catch(unlessCut({} as Record<string, Fact>));
+      if (subgoal.collect.every((name) => read[name]?.supported)) {
+        for (const [name, fact] of Object.entries(read)) keep(name, fact, page);
+        const record: SubgoalResult = {
+          id: subgoal.id,
+          goal: subgoal.goal,
+          status: "done",
+          reason: "every fact it reads is on the page",
+          elapsedMs: Math.round(performance.now() - subgoalStarted),
+          actions: 0,
+        };
+        subgoals.push(record);
+        conditions.set(record, subgoal.done_when);
+        derive(derivations, facts);
+        continue;
+      }
+    }
     const result = await run(context, {
       ...options.runOptions,
       // The outcome as well as the instruction. Told only "Click date picker
@@ -341,9 +369,7 @@ export async function runTask(
     // classifier judging the goal done. Its facts decide it. A step that
     // must reach a stated value, or kept acting, is not one.
     const reading =
-      subgoal.done_when.every(
-        (statement) => SHOWN.test(statement) && !/\d/u.test(statement),
-      ) &&
+      onlyReads(subgoal) &&
       (result.history.every((entry) => entry.kind === "wait") ||
         result.decisions.at(-1)?.operation === "DONE");
     if (
@@ -490,6 +516,19 @@ export async function runTask(
     conflicts,
     elapsedMs: Math.round(performance.now() - started),
   };
+}
+
+/**
+ * Whether a step only reads: it collects facts, and its end conditions only
+ * say that something is shown, naming no value to reach.
+ */
+function onlyReads(subgoal: Subgoal): boolean {
+  return (
+    subgoal.collect.length > 0 &&
+    subgoal.done_when.every(
+      (statement) => SHOWN.test(statement) && !/\d/u.test(statement),
+    )
+  );
 }
 
 /** End conditions that only say something is on the page. */
