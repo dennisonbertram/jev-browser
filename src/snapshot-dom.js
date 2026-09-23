@@ -1181,11 +1181,52 @@
     return false;
   }
 
+  // The open ARIA modal on top, if any. Content outside an aria-modal
+  // element is inert by contract, but a drawer's backdrop is often not a
+  // hit-test target: on Target the loop scrolled the page behind an open
+  // purchase drawer. A native modal <dialog> needs none of this; the top
+  // layer already covers the page.
+  function topModal() {
+    var open = Array.prototype.filter.call(
+      document.querySelectorAll('[aria-modal="true"]'),
+      function (el) {
+        if (isHiddenSubtree(el)) return false;
+        var cs = getComputedStyle(el);
+        if (cs.visibility === "hidden" || Number(cs.opacity) === 0) return false;
+        var r = el.getBoundingClientRect();
+        return (
+          r.width > 0 &&
+          r.height > 0 &&
+          r.right > 0 &&
+          r.bottom > 0 &&
+          r.left < innerWidth &&
+          r.top < innerHeight
+        );
+      }
+    );
+    return open.length ? open[open.length - 1] : null;
+  }
+
+  function insideOf(container, el) {
+    var node = el;
+    while (node) {
+      if (node === container) return true;
+      if (node.parentElement) node = node.parentElement;
+      else {
+        var root = node.getRootNode ? node.getRootNode() : null;
+        node = root && root.host ? root.host : null;
+      }
+    }
+    return false;
+  }
+
   function filterUnreachable(ctx) {
+    var modal = topModal();
     ctx.actions = ctx.actions.filter(function (action) {
       if (!action.ref) return true;
       var el = nodes.get(action.ref.node);
       if (!el) return true;
+      if (modal && !insideOf(modal, el)) return false;
       // A file input is exempt: sites routinely collapse it and drive it from
       // a styled label, and it is still the only way to attach a file.
       if (action.kind === "upload") return true;
