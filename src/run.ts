@@ -304,12 +304,16 @@ export async function run(
         break;
       }
 
+      // Right after a refused claim, the classifier must act before it can
+      // claim again: on Peek it claimed done twice at once while the date
+      // picker, which ignores its first click, stayed shut.
       const decision = await decide(
         observation,
         goal,
         history,
         answers,
         stop.signal,
+        history.at(-1)?.operation === "DONE" ? ["DONE"] : [],
       );
       decisions.push({ ...decision, elapsedMs: since() });
       usage.input_tokens += decision.usage.input_tokens;

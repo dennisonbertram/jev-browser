@@ -291,10 +291,14 @@ async function decideOnce(
    */
   cache?: Map<string, Decision>,
   /** Cancels the request when the caller no longer needs the answer. */
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  /** Operations not to offer this time, such as DONE right after a refused claim. */
+  withheld: Operation[] = []
 ): Promise<Decision> {
   const space = actionSpace(observation.actions);
-  const available = operationsFromSpace(space);
+  const available = operationsFromSpace(space).filter(
+    (op) => !withheld.includes(op)
+  );
 
   const operationCriteria: Record<string, string> = {};
   for (const op of available)

@@ -2140,9 +2140,9 @@ describe("fixes from the reviews of steps 4 and 5", () => {
         ],
         report: [],
       },
-      operation: "DONE",
-      // Three checks inside the run say no; the next one says yes.
-      holds: () => ++checks > 3,
+      // Judged unreachable after one check inside the run; the next says yes.
+      operation: "BLOCKED",
+      holds: () => ++checks > 1,
     });
     const { context, tab } = await page(`<button>Next</button>`);
     const result = await runTask(tab, { task: "Open next month." });

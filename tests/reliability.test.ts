@@ -455,3 +455,24 @@ describe("going back several times", () => {
     expect(result.reason).toBe("the end condition is met");
   }, 60_000);
 });
+
+describe("a refused claim", () => {
+  it("must be followed by an action before the next claim", async () => {
+    // Peek's date picker ignores its first click; told the picker was not
+    // open, the classifier claimed done again at once, and the step ended.
+    stubModels({ prefer: "DONE" });
+    const { context, page } = await pageWith(`
+      <button onclick="window.clicks = (window.clicks || 0) + 1;
+        if (window.clicks > 1) document.getElementById('o').textContent = 'Opened'">Select a date</button>
+      <p id="o"></p>`);
+    await page.click("button");
+
+    const result = await run(page, {
+      goal: "open the date picker",
+      isDone: async (observation) => observation.text.includes("Opened"),
+    });
+    await context.close();
+
+    expect(result.reason).toBe("the end condition is met");
+  }, 30_000);
+});
