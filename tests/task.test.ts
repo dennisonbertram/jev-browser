@@ -31,14 +31,18 @@ type Stubs = {
   operation: "CLICK" | "DONE" | "WAIT";
   /** Whether one end-condition statement holds for this page text. */
   holds: (statement: string, pageText: string) => boolean;
-  /** Facts the extractor returns. */
-  facts?: Record<string, { value: string; quote: string }>;
+  /** Facts the extractor returns, or a function of the page text. */
+  facts?:
+    | Record<string, { value: string; quote: string }>
+    | ((text: string) => Record<string, { value: string; quote: string }>);
   /** What the planner returns when asked to repair its plan. */
   repair?: unknown;
   /** Delay before the extractor answers, honouring the request's signal. */
   extractDelayMs?: number;
   /** Candidates the lister returns. */
   items?: unknown[];
+  /** Successive planner answers; the last one repeats. Overrides plan. */
+  plans?: unknown[];
 };
 
 /** Route each model request to a deterministic answer. */
@@ -46,6 +50,7 @@ function stubModels(stubs: Stubs): {
   classifierCalls: () => number;
   checked: string[];
   goals: string[];
+  planCalls: () => number;
 } {
   const checked: string[] = [];
   const goals: string[] = [];
@@ -117,11 +122,23 @@ function stubModels(stubs: Stubs): {
     const planning = system.includes("You plan");
     if (planning) planCalls += 1;
     const content = planning
-      ? planCalls > 1 && stubs.repair !== undefined
-        ? stubs.repair
-        : stubs.plan
+      ? stubs.plans
+        ? stubs.plans[Math.min(planCalls, stubs.plans.length) - 1]
+        : planCalls > 1 && stubs.repair !== undefined
+          ? stubs.repair
+          : stubs.plan
       : system.includes("You extract")
-        ? (stubs.facts ?? {})
+        ? typeof stubs.facts === "function"
+          ? stubs.facts(
+              String(
+                (
+                  JSON.parse(String(body.messages?.[1]?.content ?? "{}")) as {
+                    page?: { text?: string };
+                  }
+                ).page?.text ?? "",
+              ),
+            )
+          : (stubs.facts ?? {})
         : system.includes("You list")
           ? { items: stubs.items ?? [] }
           : { text: "" };
@@ -129,7 +146,12 @@ function stubModels(stubs: Stubs): {
       choices: [{ message: { content: JSON.stringify(content) } }],
     });
   }) as typeof fetch;
-  return { classifierCalls: () => classifierCalls, checked, goals };
+  return {
+    classifierCalls: () => classifierCalls,
+    checked,
+    goals,
+    planCalls: () => planCalls,
+  };
 }
 
 const TIMES_PAGE = `
@@ -908,11 +930,11 @@ describe("the whole-task runner", () => {
       expect(result.subgoals[0]).toEqual(
         expect.objectContaining({ status: "blocked" }),
       );
-      expect(result.subgoals[1]).toEqual(
-        expect.objectContaining({ status: "skipped" }),
-      );
+      // Re-planned around, with the same plan, until re-planning runs out;
+      // a step naming the missing value never runs.
+      expect(result.subgoals.every((s) => s.actions === 0)).toBe(true);
       expect(result.status).toBe("incomplete");
-    }, 30_000);
+    }, 60_000);
 
     it("orders times of day and dates as times and dates, not as their first number", async () => {
       stubModels({
@@ -1281,5 +1303,139 @@ describe("the whole-task runner", () => {
 
     expect(result.facts.selected_date?.value).toBe("October 3, 2026");
     expect(result.status).toBe("done");
+  }, 60_000);
+
+  describe("re-planning", () => {
+    const STUCK = `<button>Nothing</button><p>Times: 9:00 AM</p>`;
+    const stuckPlan = {
+      subgoals: [
+        {
+          id: "a",
+          goal: "Do the impossible",
+          done_when: ["Never true"],
+          collect: [],
+        },
+      ],
+      report: [],
+    };
+    const recoveryPlan = {
+      subgoals: [
+        {
+          id: "b",
+          goal: "Show the times",
+          done_when: ["Times are shown"],
+          collect: [],
+        },
+      ],
+      report: [],
+    };
+
+    it("asks once more when the first plan is not usable", async () => {
+      const stub = stubModels({
+        plan: {},
+        plans: [
+          { subgoals: [{ id: "a", goal: "x", done_when: [] }] },
+          recoveryPlan,
+        ],
+        operation: "CLICK",
+        holds: (statement) => statement === "Times are shown",
+      });
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.setContent(STUCK);
+
+      const result = await runTask(page, { task: "Show the times." });
+      await context.close();
+
+      expect(stub.planCalls()).toBe(2);
+      expect(result.status).toBe("done");
+    }, 60_000);
+
+    it("plans the rest from the current page when a step is blocked", async () => {
+      const stub = stubModels({
+        plan: {},
+        plans: [stuckPlan, recoveryPlan],
+        operation: "CLICK",
+        holds: (statement) => statement === "Times are shown",
+      });
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.setContent(STUCK);
+
+      const result = await runTask(page, { task: "Show the times." });
+      await context.close();
+
+      expect(stub.planCalls()).toBe(2);
+      expect(result.subgoals.map((s) => `${s.id}:${s.status}`)).toEqual([
+        "a:blocked",
+        "b:done",
+      ]);
+      expect(result.status).toBe("done");
+    }, 60_000);
+
+    it("re-plans at most twice", async () => {
+      const stub = stubModels({
+        plan: {},
+        plans: [stuckPlan],
+        operation: "CLICK",
+        holds: () => false,
+      });
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.setContent(STUCK);
+
+      const result = await runTask(page, { task: "Show the times." });
+      await context.close();
+
+      expect(stub.planCalls()).toBe(3);
+      expect(result.status).toBe("incomplete");
+    }, 90_000);
+  });
+
+  it("reports a verified value that changed before the end, instead of success", async () => {
+    // On Peek, wandering after the date was verified moved it to October 31.
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "pick",
+            goal: "Pick the date",
+            done_when: ["A date is chosen"],
+            collect: ["selected_date"],
+          },
+          {
+            id: "other",
+            goal: "Click Other",
+            done_when: ["Other was clicked"],
+            collect: [],
+          },
+        ],
+        report: ["selected_date"],
+      },
+      operation: "CLICK",
+      holds: (statement, text) =>
+        statement !== "Other was clicked" || text.includes("31"),
+      facts: (text) => {
+        const date = /October \d+, 2026/u.exec(text)?.[0] ?? "";
+        return { selected_date: { value: date, quote: `Selected: ${date}` } };
+      },
+    });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(`<p id="s">Selected: October 3, 2026</p>
+      <button onclick="document.getElementById('s').textContent = 'Selected: October 31, 2026'">Other</button>`);
+
+    const result = await runTask(page, { task: "Pick October 3." });
+    await context.close();
+
+    expect(result.conflicts).toEqual([
+      {
+        name: "selected_date",
+        earlier: "October 3, 2026",
+        final: "October 31, 2026",
+      },
+    ]);
+    expect(result.facts.selected_date?.value).toBe("October 31, 2026");
+    expect(result.status).toBe("incomplete");
   }, 60_000);
 });

@@ -85,10 +85,14 @@ export type TaskResult = {
   status: "done" | "incomplete";
   task: string;
   plan: TaskPlan;
+  /** Plans made after a step was blocked, for the rest of the task. */
+  replans: TaskPlan[];
   subgoals: SubgoalResult[];
   facts: Record<string, Fact>;
   /** Report fields the page never supported. */
   missing: string[];
+  /** Facts the final page shows differently from when they were verified. */
+  conflicts: { name: string; earlier: string; final: string }[];
   elapsedMs: number;
 };
 
@@ -110,6 +114,7 @@ const HOLDS = 0.8;
 const MAX_SUBGOALS = 8;
 const CHOICE_ATTEMPTS = 3;
 const CHOICE_RETRY_MS = 1_500;
+const MAX_REPLANS = 2;
 
 export async function runTask(
   target: BrowserTarget,
@@ -125,18 +130,54 @@ export async function runTask(
   // cannot outlive the task.
   const deadlineAt = Date.now() + budgetMs;
 
+  const now = options.now ?? new Date();
   const first = await observe(context, { diagnostics: false });
-  const plan = await makePlan(
-    task,
-    first,
-    options.now ?? new Date(),
-    options.signal,
-  );
+  const plan = await makePlan(task, first, now, options.signal);
 
   const subgoals: SubgoalResult[] = [];
   const facts: Record<string, Fact> = {};
   let stopped = false;
-  for (const planned of plan.subgoals) {
+  let queue = [...plan.subgoals];
+  const replans: TaskPlan[] = [];
+  const report = new Set(plan.report);
+  const derivations = [...(plan.derive ?? [])];
+  // A blocked step is a surprise: the rest of the task is planned again from
+  // the page as it is now, knowing what is done and what failed. Bounded, so
+  // a task that cannot be done ends.
+  const blocked = async (failed: SubgoalResult, index: number) => {
+    if (
+      replans.length >= MAX_REPLANS ||
+      options.signal?.aborted ||
+      performance.now() > deadline
+    ) {
+      stopped = true;
+      return;
+    }
+    const page = await observe(context, { diagnostics: false });
+    const next = await makePlan(task, page, now, options.signal, {
+      done: subgoals
+        .filter((subgoal) => subgoal.status === "done")
+        .map((subgoal) => subgoal.goal),
+      failed: { goal: failed.goal, reason: failed.reason },
+      known_facts: Object.fromEntries(
+        Object.entries(facts)
+          .filter(([, fact]) => fact.supported)
+          .map(([name, fact]) => [name, fact.value]),
+      ),
+      problem:
+        "A step failed. Plan the rest of the task from the page as it is now. Do not repeat the failed step unchanged: find another way, such as another control, going back, or a different route through the site. Name known facts as {name}.",
+    }).catch(() => null);
+    if (!next) {
+      stopped = true;
+      return;
+    }
+    replans.push(next);
+    queue = [...queue.slice(0, index + 1), ...next.subgoals];
+    for (const name of next.report) report.add(name);
+    derivations.push(...(next.derive ?? []));
+  };
+  for (let index = 0; index < queue.length; index += 1) {
+    const planned = queue[index]!;
     // A choice is made from the page the subgoal starts on, which is where
     // the previous one left the options; the subgoal then acts on it.
     if (!stopped && planned.choose && !options.signal?.aborted) {
@@ -175,7 +216,7 @@ export async function runTask(
           elapsedMs: 0,
           actions: 0,
         });
-        stopped = true;
+        await blocked(subgoals[subgoals.length - 1]!, index);
         continue;
       }
     }
@@ -227,7 +268,7 @@ export async function runTask(
         elapsedMs: 0,
         actions: 0,
       });
-      stopped = true;
+      await blocked(subgoals[subgoals.length - 1]!, index);
       continue;
     }
     if (stopped || options.signal?.aborted || performance.now() > deadline) {
@@ -279,7 +320,7 @@ export async function runTask(
       result.status !== "done" &&
       (subgoal.collect.length === 0 || stoppedOutside || !onlyRead)
     ) {
-      stopped = true;
+      await blocked(subgoals[subgoals.length - 1]!, index);
       continue;
     }
     if (subgoal.collect.length > 0) {
@@ -307,42 +348,73 @@ export async function runTask(
           record.status = "done";
           record.reason = "every fact it reads is on the page";
         } else {
-          stopped = true;
+          await blocked(subgoals[subgoals.length - 1]!, index);
           continue;
         }
       }
     }
-    derive(plan.derive ?? [], facts);
+    derive(derivations, facts);
   }
 
-  // A fact read too early, such as a field that updated after the step
-  // that read it, gets one more reading from the page the task ended on.
-  const unread = plan.report.filter((name) => !facts[name]?.supported);
-  if (unread.length > 0 && !stopped && !options.signal?.aborted) {
+  // The final page is read once more. A fact read too early, such as a
+  // field that updated after the step that read it, gets another reading;
+  // and a fact read from this same page is checked again, because a later
+  // step can undo it: on Peek, wandering after the date was verified moved
+  // it to October 31. Facts from other pages and chosen options are
+  // history, not state, and are not re-read.
+  const conflicts: TaskResult["conflicts"] = [];
+  if (!stopped && !options.signal?.aborted) {
     const page = await observe(context, { diagnostics: false });
-    const read = await extractFacts(
-      task,
-      unread,
-      page,
-      "final",
-      options.signal,
-    ).catch((error: unknown) => {
-      if (options.signal?.aborted) return {} as Record<string, Fact>;
-      throw error;
+    const unread = [...report].filter((name) => !facts[name]?.supported);
+    const recheck = [...report].filter((name) => {
+      const fact = facts[name];
+      return (
+        fact?.supported &&
+        fact.detail === undefined &&
+        fact.subgoal !== "derived" &&
+        fact.url === page.url
+      );
     });
-    for (const [name, fact] of Object.entries(read))
-      if (fact.supported) facts[name] = fact;
-    derive(plan.derive ?? [], facts);
+    if (unread.length + recheck.length > 0) {
+      const read = await extractFacts(
+        task,
+        [...unread, ...recheck],
+        page,
+        "final",
+        options.signal,
+      ).catch((error: unknown) => {
+        if (options.signal?.aborted) return {} as Record<string, Fact>;
+        throw error;
+      });
+      for (const name of unread)
+        if (read[name]?.supported) facts[name] = read[name]!;
+      for (const name of recheck) {
+        const earlier = facts[name]!.value!;
+        const now = read[name];
+        if (!now?.supported || sameValue(earlier, now.value!)) continue;
+        conflicts.push({ name, earlier, final: now.value! });
+        facts[name] = now;
+      }
+      derive(derivations, facts);
+    }
   }
-  const missing = plan.report.filter((name) => !facts[name]?.supported);
-  const allDone = subgoals.every((subgoal) => subgoal.status === "done");
+  const missing = [...report].filter((name) => !facts[name]?.supported);
+  // Done when the last plan ran to its end: a step blocked and then planned
+  // around stays in the record, but does not fail the task.
+  const finished =
+    !stopped && subgoals.every((subgoal) => subgoal.status !== "skipped");
   return {
-    status: allDone && missing.length === 0 ? "done" : "incomplete",
+    status:
+      finished && missing.length === 0 && conflicts.length === 0
+        ? "done"
+        : "incomplete",
     task,
     plan,
+    replans,
     subgoals,
     facts,
     missing,
+    conflicts,
     elapsedMs: Math.round(performance.now() - started),
   };
 }
@@ -525,6 +597,8 @@ async function makePlan(
   page: PageObservation,
   now: Date,
   signal?: AbortSignal,
+  /** What a re-plan also knows: done steps, the failure, known facts. */
+  context: Record<string, unknown> = {},
 ): Promise<TaskPlan> {
   const today = now.toLocaleDateString("en-US", {
     weekday: "long",
@@ -532,12 +606,25 @@ async function makePlan(
     month: "long",
     day: "numeric",
   });
-  const { json } = await textJson(
-    PLANNER_SYSTEM,
-    { task, today, page: planningView(page) },
-    { model: process.env.PLANNER_MODEL, signal },
-  );
+  const base = { task, today, page: planningView(page), ...context };
+  const { json } = await textJson(PLANNER_SYSTEM, base, {
+    model: process.env.PLANNER_MODEL,
+    signal,
+  });
   let plan = parsePlan(json);
+  // An unusable answer is asked for once more, saying what was wrong.
+  if (!plan) {
+    const retried = await textJson(
+      PLANNER_SYSTEM,
+      {
+        ...base,
+        problem:
+          "The previous answer was not a usable plan. Every subgoal needs a goal and at least one done_when; choose needs name, items, by and order; derive needs name, at least two among, and order. Return the whole plan.",
+      },
+      { model: process.env.PLANNER_MODEL, signal },
+    );
+    plan = parsePlan(retried.json);
+  }
   if (!plan) throw new Error("the planner returned no usable plan");
 
   // Some end conditions can never be confirmed by one yes/no check on the
@@ -553,9 +640,7 @@ async function makePlan(
     const repaired = await textJson(
       PLANNER_SYSTEM,
       {
-        task,
-        today,
-        page: planningView(page),
+        ...base,
         previous_plan: plan,
         problem:
           'These done_when statements cannot be confirmed by one yes/no check of the page as it is now: they compare with an earlier state the checker never sees, they rank options (earliest, cheapest, highest), which one check cannot do, or they name a widget state (open, closed, expanded, hidden), which the page text does not state. Rewrite each as the content the page shows once the subgoal is done, for example "a calendar showing October 2026 is visible" or "a date in October 2026 is selected". Use choose for a ranking. Return the whole corrected plan.',
@@ -821,6 +906,11 @@ function shows(quote: string, value: string): boolean {
       said.includes(word),
     )
   );
+}
+
+/** Whether two readings state the same value: the same numbers and words. */
+function sameValue(a: string, b: string): boolean {
+  return shows(a, b) && shows(b, a);
 }
 
 function normalise(text: string): string {
