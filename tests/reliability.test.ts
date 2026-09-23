@@ -476,3 +476,39 @@ describe("a refused claim", () => {
     expect(result.reason).toBe("the end condition is met");
   }, 30_000);
 });
+
+describe("a transient gateway error", () => {
+  it("is retried, and never quoted whole", async () => {
+    // Kernel runs hit TypeSafe 520s from its Cloudflare edge; one ended a
+    // task and printed the whole HTML error page.
+    process.env.TYPESAFE_API_KEY = "test";
+    let calls = 0;
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      calls += 1;
+      if (calls === 1)
+        return new Response("<!DOCTYPE html><title>520</title>", { status: 520 });
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      const answers: Record<string, unknown> = {};
+      for (const [name, question] of Object.entries(
+        body.questions as Record<string, { criteria: object }>
+      )) {
+        const keys = Object.keys(question.criteria);
+        const choice = name === "operation" && keys.includes("BLOCKED") ? "BLOCKED" : keys[0]!;
+        answers[name] = {
+          type: "choice",
+          choice,
+          confidence: 1,
+          probabilities: Object.fromEntries(keys.map((k) => [k, k === choice ? 1 : 0])),
+        };
+      }
+      return Response.json({ answers, usage: { input_tokens: 1, output_tokens: 1 } });
+    }) as typeof fetch;
+    const { context, page } = await pageWith("<button>Go</button>");
+
+    const result = await run(page, { goal: "go" });
+    await context.close();
+
+    expect(calls).toBe(2);
+    expect(result.reason).toBe("the classifier judged the goal unreachable from this page");
+  }, 30_000);
+});

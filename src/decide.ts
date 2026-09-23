@@ -42,7 +42,9 @@ const REQUEST_TIMEOUT_MS = Number(process.env.JEV_REQUEST_TIMEOUT_MS ?? 60_000);
 
 const TEXT_BASE_URL = (process.env.TEXT_MODEL_BASE_URL ?? "https://api.openai.com/v1").replace(/\/+$/u, "");
 const TEXT_URL = `${TEXT_BASE_URL}/chat/completions`;
-const RETRY_STATUSES = new Set([429, 503, 529]);
+// Rate limits, and gateway errors that pass: Kernel runs hit TypeSafe 520s
+// from its Cloudflare edge.
+const RETRY_STATUSES = new Set([429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 529]);
 const RETRY_BACKOFFS_MS = [400, 1200];
 
 /**
@@ -251,9 +253,11 @@ export async function postTypeSafe(
       await pause(RETRY_BACKOFFS_MS[attempt]!, signal);
       continue;
     }
-    throw new Error(
-      `TypeSafe request failed: ${res.status} ${await res.text()}`
-    );
+    // A JSON error explains itself; an HTML error page is only noise.
+    const detail = res.headers.get("content-type")?.includes("json")
+      ? ` ${(await res.text()).slice(0, 300)}`
+      : "";
+    throw new Error(`TypeSafe request failed: ${res.status}${detail}`);
   }
 }
 
