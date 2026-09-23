@@ -269,3 +269,40 @@ describe("end conditions", () => {
     expect(result.reason).toBe("the end condition is met");
   }, 60_000);
 });
+
+describe("planned inputs", () => {
+  it("types only a value it was given, and refuses one the text model invents", async () => {
+    stubModels({ prefer: "TYPE_TEXT", text: "San Francisco" });
+    const { context, page } = await pageWith(
+      `<label>Where else? <input id="where"></label>`,
+    );
+
+    const result = await run(page, {
+      goal: "enter the destination",
+      inputs: { destination: "London" },
+    });
+    const typed = await page.inputValue("#where");
+    await context.close();
+
+    expect(typed).toBe("");
+    expect(result.reason).toBe(
+      "the text model gave no value for the chosen field",
+    );
+  }, 30_000);
+
+  it("types a value it was given", async () => {
+    stubModels({ prefer: "TYPE_TEXT", text: "London" });
+    const { context, page } = await pageWith(
+      `<label>Where else? <input id="where"></label>`,
+    );
+
+    await run(page, {
+      goal: "enter the destination",
+      inputs: { destination: "London" },
+    });
+    const typed = await page.inputValue("#where");
+    await context.close();
+
+    expect(typed).toBe("London");
+  }, 30_000);
+});

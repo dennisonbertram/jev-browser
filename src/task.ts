@@ -26,6 +26,8 @@ export type Subgoal = {
   done_when: string[];
   /** Facts to read from the page once this subgoal is done. */
   collect: string[];
+  /** The only values this subgoal may type, keyed by what each is for. */
+  inputs?: Record<string, string>;
 };
 
 export type TaskPlan = { subgoals: Subgoal[]; report: string[] };
@@ -122,6 +124,7 @@ export async function runTask(
     const result = await run(context, {
       ...options.runOptions,
       goal: subgoal.goal,
+      inputs: subgoal.inputs,
       signal: options.signal,
       deadlineAt,
       isDone: async (observation) =>
@@ -174,12 +177,14 @@ export async function runTask(
 
 const PLANNER_SYSTEM = [
   "You plan browser tasks for a fast automation engine. Return one JSON object:",
-  '{"subgoals":[{"id":"short_snake_case","goal":"...","done_when":["..."],"collect":["..."]}],"report":["..."]}',
+  '{"subgoals":[{"id":"short_snake_case","goal":"...","done_when":["..."],"collect":["..."],"inputs":{"what_it_is_for":"value"}}],"report":["..."]}',
   "Rules:",
   `- 1 to ${MAX_SUBGOALS} subgoals, in order. Each is one bounded piece of work on the current site that ends in a visible page state.`,
   "- goal: an instruction for an engine that can only click, type, select, scroll, press keys and wait. Give concrete values: absolute dates, names, numbers. Never ask it to compare many items or to remember anything across pages.",
   '- done_when: 1 to 4 short statements, each checkable by looking at the current page alone, all true only when that subgoal is complete. The checker never sees earlier pages, so never compare with an earlier state (no "current", "previous", "than before", "one month later"); state the absolute value instead, such as the month and year, or the date.',
   '- A done_when statement may name a value from the task or from today\'s date, such as the month and year. Never name a value that can only be discovered on the site, such as which date is the earliest available, a price or a time, and never rank (earliest, cheapest, highest): describe the observable property instead, for example "a date in October 2026 is selected". The ranking belongs in the goal.',
+  "- Keep each subgoal small: about three actions at most, such as filling one field and choosing its suggestion. Split longer work into several subgoals.",
+  '- inputs: every value the subgoal will type into a field, exactly as it should be typed, keyed by what it is for, for example {"origin":"New York"}. The engine types nothing else. Omit it when the subgoal types nothing.',
   "- collect: names from report that can be read from the page once that subgoal is done.",
   "- report: short snake_case names for every fact the task asks to be reported.",
   "- Honour the task's stopping point. Never plan to activate a final purchase, booking, reservation or payment control, and never plan to enter personal or payment details.",
@@ -290,10 +295,22 @@ function parsePlan(json: Record<string, unknown>): TaskPlan | null {
       goal,
       done_when: doneWhen,
       collect: strings(record.collect, 12),
+      ...inputsOf(record.inputs),
     });
   }
   if (subgoals.length === 0) return null;
   return { subgoals, report: strings(json.report, 20) };
+}
+
+/** A subgoal's typed values: strings only, since nothing else can be typed. */
+function inputsOf(value: unknown): { inputs?: Record<string, string> } {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return {};
+  const entries = Object.entries(value).filter(
+    (entry): entry is [string, string] =>
+      typeof entry[1] === "string" && entry[1].trim() !== "",
+  );
+  return entries.length > 0 ? { inputs: Object.fromEntries(entries) } : {};
 }
 
 /** The state a TypeSafe question sees: the page text and its controls' values. */

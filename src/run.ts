@@ -92,6 +92,12 @@ export type RunOptions = {
   signal?: AbortSignal;
   /** Epoch milliseconds after which the run stops with "the time budget ran out". */
   deadlineAt?: number;
+  /**
+   * The values this run may type, keyed by what each is for. When given, a
+   * field gets one of them or nothing: a value the text model invents is
+   * refused. On Google Flights it typed "San Francisco" into "Where else?".
+   */
+  inputs?: Record<string, string>;
 };
 
 /**
@@ -388,10 +394,15 @@ export async function run(
                 recent_actions: history
                   .slice(-6)
                   .map((entry) => ({ action: entry.action, text: entry.text })),
+                inputs: options.inputs,
               },
               stop.signal,
             );
-            text = generated.value;
+            text =
+              options.inputs &&
+              !Object.values(options.inputs).includes(generated.value)
+                ? ""
+                : generated.value;
             textLatencyMs = generated.latencyMs;
             if (text === "") {
               emptyText += 1;

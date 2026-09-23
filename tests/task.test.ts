@@ -670,4 +670,32 @@ describe("the whole-task runner", () => {
       expect.objectContaining({ value: null, supported: false }),
     );
   }, 30_000);
+
+  it("keeps the values the planner gives for the fields a subgoal will fill", async () => {
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "times",
+            goal: "Show the available times",
+            done_when: ["Start times are shown on the page"],
+            collect: [],
+            inputs: { destination: "London", nights: 3 },
+          },
+        ],
+        report: [],
+      },
+      operation: "CLICK",
+      holds: (_statement, text) => text.includes("Times:"),
+    });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(TIMES_PAGE);
+
+    const result = await runTask(page, { task: "Show the times." });
+    await context.close();
+
+    // Only strings: a value that is not text is not something to type.
+    expect(result.plan.subgoals[0]!.inputs).toEqual({ destination: "London" });
+  }, 30_000);
 });
