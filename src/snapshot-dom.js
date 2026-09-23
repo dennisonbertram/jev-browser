@@ -549,9 +549,7 @@
     // that reason.
     var body = doc.body;
     var childCount = body ? body.getElementsByTagName("*").length : 0;
-    var textLen = body ? (body.textContent || "").length : 0;
     var shadow = 0;
-    var shadowText = 0;
     if (body) {
       // getElementsByTagName and textContent stop at shadow boundaries, so
       // without this pass a mutation inside an open shadow root left the
@@ -566,9 +564,8 @@
           var kid = kids[hi];
           if (kid.shadowRoot) {
             shadow++;
-            shadowText += (kid.shadowRoot.textContent || "").length;
-            // Element count as well as text: a structural change inside a
-            // shadow root often adds no text at all.
+            // A structural change inside a shadow root shows up in its
+            // element count; its text is left to the observation fingerprint.
             shadow += kid.shadowRoot.querySelectorAll("*").length;
             hosts.push(kid.shadowRoot);
           }
@@ -588,18 +585,15 @@
     }
     // Focus is deliberately NOT in here: a fill clicks the field to focus it,
     // so including focus made an action invalidate its own decision.
+    // Text length is deliberately not in the marker. Text that keeps
+    // changing elsewhere -- a clock, a live price -- moved it between every
+    // decision and its action, so no action on an unchanged control could
+    // run: with a 150 ms classifier call, a ticking clock blocked a plain
+    // click. The observation fingerprint carries the text instead, so new
+    // content still counts as progress; the marker only answers whether the
+    // page's structure and state still match the decision.
     return hashString(
-      doc.URL +
-        "|" +
-        childCount +
-        "|" +
-        textLen +
-        "|" +
-        state +
-        "|" +
-        shadow +
-        "|" +
-        shadowText
+      doc.URL + "|" + childCount + "|" + state + "|" + shadow
     );
   }
 

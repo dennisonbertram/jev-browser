@@ -66,6 +66,8 @@ export type TaskOptions = {
   now?: Date;
   /** The whole task's time budget. Default five minutes. */
   deadlineMs?: number;
+  /** Stops the task: the current subgoal ends and the rest are skipped. */
+  signal?: AbortSignal;
   /** Passed to each subgoal's run. */
   runOptions?: Pick<RunOptions, "browserTimeoutMs" | "uploadDir">;
   onStep?: (subgoal: string, entry: HistoryEntry) => void;
@@ -83,23 +85,34 @@ export async function runTask(
   const task = options.task.trim();
   if (!task) throw new Error("Supply a task");
   const started = performance.now();
-  const deadline = started + (options.deadlineMs ?? 5 * 60_000);
+  const budgetMs = options.deadlineMs ?? 5 * 60_000;
+  const deadline = started + budgetMs;
+  // The same budget as wall-clock time, for each subgoal's run, so a subgoal
+  // cannot outlive the task.
+  const deadlineAt = Date.now() + budgetMs;
 
   const first = await observe(context, { diagnostics: false });
-  const plan = await makePlan(task, first, options.now ?? new Date());
+  const plan = await makePlan(
+    task,
+    first,
+    options.now ?? new Date(),
+    options.signal
+  );
 
   const subgoals: SubgoalResult[] = [];
   const facts: Record<string, Fact> = {};
   let stopped = false;
   for (const subgoal of plan.subgoals) {
-    if (stopped || performance.now() > deadline) {
+    if (stopped || options.signal?.aborted || performance.now() > deadline) {
       subgoals.push({
         id: subgoal.id,
         goal: subgoal.goal,
         status: "skipped",
         reason: stopped
           ? "an earlier subgoal did not finish"
-          : "the task's time budget ran out",
+          : options.signal?.aborted
+            ? "the task was cancelled"
+            : "the task's time budget ran out",
         elapsedMs: 0,
         actions: 0,
       });
@@ -109,8 +122,11 @@ export async function runTask(
     const result = await run(context, {
       ...options.runOptions,
       goal: subgoal.goal,
+      signal: options.signal,
+      deadlineAt,
       isDone: async (observation) =>
-        (await endCondition(observation, subgoal.done_when)).holds,
+        (await endCondition(observation, subgoal.done_when, options.signal))
+          .holds,
       onStep: (entry) => options.onStep?.(subgoal.id, entry),
     });
     subgoals.push({
@@ -127,7 +143,13 @@ export async function runTask(
     }
     if (subgoal.collect.length > 0) {
       const page = await observe(context, { diagnostics: false });
-      const read = await extractFacts(task, subgoal.collect, page, subgoal.id);
+      const read = await extractFacts(
+        task,
+        subgoal.collect,
+        page,
+        subgoal.id,
+        options.signal
+      );
       for (const [name, fact] of Object.entries(read)) {
         // A supported value is never replaced by an unsupported one.
         if (!facts[name]?.supported || fact.supported) facts[name] = fact;
@@ -165,7 +187,8 @@ const PLANNER_SYSTEM = [
 async function makePlan(
   task: string,
   page: PageObservation,
-  now: Date
+  now: Date,
+  signal?: AbortSignal
 ): Promise<TaskPlan> {
   const today = now.toLocaleDateString("en-US", {
     weekday: "long",
@@ -176,7 +199,7 @@ async function makePlan(
   const { json } = await textJson(
     PLANNER_SYSTEM,
     { task, today, page: planningView(page) },
-    { model: process.env.PLANNER_MODEL }
+    { model: process.env.PLANNER_MODEL, signal }
   );
   let plan = parsePlan(json);
   if (!plan) throw new Error("the planner returned no usable plan");
@@ -202,7 +225,7 @@ async function makePlan(
           'These done_when statements cannot be confirmed by one yes/no check of the page as it is now: they compare with an earlier state the checker never sees, or they rank options (earliest, cheapest, highest), which one check cannot do. Rewrite each as a plain observable property of the page once the subgoal is done, for example "a date in October 2026 is selected". Keep the ranking in the goal, not the check. Return the whole corrected plan.',
         statements: relative,
       },
-      { model: process.env.PLANNER_MODEL }
+      { model: process.env.PLANNER_MODEL, signal }
     );
     plan = parsePlan(repaired.json) ?? plan;
   }
@@ -293,7 +316,8 @@ function pageState(observation: PageObservation) {
  */
 async function endCondition(
   observation: PageObservation,
-  statements: string[]
+  statements: string[],
+  signal?: AbortSignal
 ): Promise<{ holds: boolean; scores: number[] }> {
   const questions = Object.fromEntries(
     statements.map((statement, index) => [
@@ -301,11 +325,10 @@ async function endCondition(
       { type: "noul", instructions: statement },
     ])
   );
-  const response = await postTypeSafe({
-    model: "jev-latest",
-    state: pageState(observation),
-    questions,
-  });
+  const response = await postTypeSafe(
+    { model: "jev-latest", state: pageState(observation), questions },
+    signal
+  );
   const scores = statements.map((_, index) => {
     const answer = response.answers[`condition_${index}`] as
       { noul?: unknown } | undefined;
@@ -327,15 +350,15 @@ async function extractFacts(
   task: string,
   fields: string[],
   observation: PageObservation,
-  subgoal: string
+  subgoal: string,
+  signal?: AbortSignal
 ): Promise<Record<string, Fact>> {
   const state = pageState(observation);
-  const { json } = await textJson(EXTRACTOR_SYSTEM, {
-    task,
-    fields,
-    page: state.page,
-    controls: state.controls,
-  });
+  const { json } = await textJson(
+    EXTRACTOR_SYSTEM,
+    { task, fields, page: state.page, controls: state.controls },
+    { signal }
+  );
   // A quantity or a chosen date often lives in a control's value rather than
   // the visible text, so a quote may come from either.
   const pageText = normalise(

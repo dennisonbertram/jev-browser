@@ -1,0 +1,204 @@
+/**
+ * Step 2 of the whole-task design: actions that behave predictably.
+ *
+ * A run stops promptly when cancelled or out of time, waiting that changes
+ * nothing is capped, input the page interrupted is recorded rather than
+ * lost, and text that keeps changing somewhere else on the page does not
+ * make every action look stale.
+ */
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { chromium, type Browser } from "playwright";
+import { run } from "../src/index.js";
+
+let browser: Browser;
+const realFetch = globalThis.fetch;
+beforeAll(async () => {
+  browser = await chromium.launch();
+}, 60_000);
+afterAll(async () => {
+  await browser?.close();
+});
+afterEach(() => {
+  globalThis.fetch = realFetch;
+});
+
+type Stub = {
+  /** The operation to choose when it is offered; otherwise the first. */
+  prefer?: string;
+  /** Delay before each classifier answer, honouring the request's signal. */
+  delayMs?: number;
+  /** The text model's answer for a field. */
+  text?: string;
+};
+
+function stubModels(stub: Stub): { calls: () => number } {
+  process.env.TYPESAFE_API_KEY = "test";
+  process.env.TEXT_MODEL_API_KEY = "test";
+  let calls = 0;
+  globalThis.fetch = (async (
+    url: string | URL | Request,
+    init?: RequestInit
+  ) => {
+    const href = String(url instanceof Request ? url.url : url);
+    const body = JSON.parse(String(init?.body ?? "{}"));
+    calls += 1;
+    if (stub.delayMs) {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, stub.delayMs);
+        init?.signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(init.signal?.reason ?? new Error("aborted"));
+        });
+      });
+    }
+    if (href.includes("typesafe")) {
+      const answers: Record<string, unknown> = {};
+      for (const [name, question] of Object.entries(
+        body.questions as Record<string, { criteria: object }>
+      )) {
+        const keys = Object.keys(question.criteria);
+        const choice =
+          name === "operation" && stub.prefer && keys.includes(stub.prefer)
+            ? stub.prefer
+            : keys[0]!;
+        answers[name] = {
+          type: "choice",
+          choice,
+          confidence: 1,
+          probabilities: Object.fromEntries(
+            keys.map((k) => [k, k === choice ? 1 : 0])
+          ),
+        };
+      }
+      return Response.json({
+        answers,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+    }
+    return Response.json({
+      choices: [
+        { message: { content: JSON.stringify({ text: stub.text ?? "" }) } },
+      ],
+    });
+  }) as typeof fetch;
+  return { calls: () => calls };
+}
+
+async function pageWith(html: string) {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.setContent(html);
+  return { context, page };
+}
+
+describe("cancellation and time budgets", () => {
+  it("makes no model call when the signal is already aborted", async () => {
+    const counter = stubModels({ prefer: "CLICK" });
+    const { context, page } = await pageWith("<button>Go</button>");
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await run(page, { goal: "go", signal: controller.signal });
+    await context.close();
+
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toBe("the run was cancelled");
+    expect(counter.calls()).toBe(0);
+  });
+
+  it("stops a pending classifier request when cancelled", async () => {
+    stubModels({ prefer: "CLICK", delayMs: 5_000 });
+    const { context, page } = await pageWith("<button>Go</button>");
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 300);
+
+    const started = Date.now();
+    const result = await run(page, { goal: "go", signal: controller.signal });
+    const took = Date.now() - started;
+    await context.close();
+
+    expect(result.reason).toBe("the run was cancelled");
+    expect(took).toBeLessThan(2_500);
+  }, 15_000);
+
+  it("ends when its time budget runs out", async () => {
+    stubModels({ prefer: "CLICK", delayMs: 250 });
+    const { context, page } = await pageWith(
+      `<button onclick="this.textContent = this.textContent === 'Open' ? 'Close' : 'Open'">Open</button>`
+    );
+
+    const started = Date.now();
+    const result = await run(page, {
+      goal: "open it",
+      deadlineAt: Date.now() + 700,
+    });
+    const took = Date.now() - started;
+    await context.close();
+
+    expect(result.reason).toBe("the time budget ran out");
+    expect(took).toBeLessThan(3_000);
+  }, 15_000);
+});
+
+describe("waiting", () => {
+  it("stops waiting when waiting changes nothing", async () => {
+    stubModels({ prefer: "WAIT" });
+    const { context, page } = await pageWith("<button>Go</button>");
+
+    const result = await run(page, { goal: "wait for results" });
+    await context.close();
+
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toBe(
+      "it waited three times and the page did not change"
+    );
+    expect(result.history.filter((h) => h.kind === "wait").length).toBe(3);
+  }, 30_000);
+});
+
+describe("interrupted input", () => {
+  it("records input the page interrupted, instead of losing it", async () => {
+    stubModels({ text: "London" });
+    // Focusing the field changes the page, so the check made after the click
+    // and select-all, just before typing, finds a different page.
+    const { context, page } = await pageWith(`
+      <label>Destination <input onfocus="
+        if (!window.opened) { window.opened = true;
+          document.body.insertAdjacentHTML('beforeend', '<ul><li>London</li><li>Paris</li></ul>'); }
+      "></label>`);
+
+    const result = await run(page, { goal: "enter London as the destination" });
+    await context.close();
+
+    expect(
+      result.history.some(
+        (h) => h.kind === "fill" && /interrupted/i.test(h.action)
+      )
+    ).toBe(true);
+  }, 30_000);
+});
+
+describe("text that keeps changing elsewhere", () => {
+  it("does not make an unrelated action look stale", async () => {
+    // A realistic classifier latency. With no delay this passed alone and
+    // failed under a loaded machine: any gap between reading the page and
+    // acting lets the clock's text change first.
+    stubModels({ prefer: "CLICK", delayMs: 150 });
+    // A ticking clock: the text length changes constantly, the controls never do.
+    const { context, page } = await pageWith(`
+      <p id="clock">0</p>
+      <button onclick="document.title = 'clicked'">Continue</button>
+      <script>let n = 0; setInterval(() => {
+        n += 1; document.getElementById('clock').textContent = String(n).repeat(n % 7 + 1);
+      }, 5);</script>`);
+
+    const result = await run(page, { goal: "continue" });
+    const title = await page.title();
+    await context.close();
+
+    expect(title).toBe("clicked");
+    expect(result.reason).not.toBe(
+      "the page kept changing under every attempted action"
+    );
+  }, 30_000);
+});

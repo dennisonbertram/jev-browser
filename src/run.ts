@@ -83,6 +83,15 @@ export type RunOptions = {
    * before.
    */
   isDone?: (observation: PageObservation) => Promise<boolean>;
+  /**
+   * Stops the run. No new model call, observation or action starts after it
+   * aborts, and a model request in flight is abandoned; a browser action
+   * already dispatched finishes first. The run returns "the run was
+   * cancelled".
+   */
+  signal?: AbortSignal;
+  /** Epoch milliseconds after which the run stops with "the time budget ran out". */
+  deadlineAt?: number;
 };
 
 /**
@@ -199,9 +208,32 @@ export async function run(
   let checkedFingerprint: string | undefined;
   let conditionMet = false;
   let refusedClaims = 0;
+  // One signal for everything that should stop: the caller's cancellation or
+  // the time budget. It is handed to every model request.
+  const stop = new AbortController();
+  const onCancel = () => stop.abort(new Error("cancelled"));
+  if (options.signal?.aborted) onCancel();
+  options.signal?.addEventListener("abort", onCancel, { once: true });
+  const budgetTimer =
+    options.deadlineAt === undefined
+      ? undefined
+      : setTimeout(
+          () => stop.abort(new Error("time budget")),
+          Math.max(0, options.deadlineAt - Date.now())
+        );
+  const stopReason = () =>
+    options.signal?.aborted
+      ? "the run was cancelled"
+      : "the time budget ran out";
+  let idleWaits = 0;
   try {
     observation = await look();
     while (status === "ready") {
+      if (stop.signal.aborted) {
+        status = "blocked";
+        reason = stopReason();
+        break;
+      }
       if (decisions.length >= MAX_DECISIONS) {
         status = "blocked";
         reason = `reached the limit of ${MAX_DECISIONS} decisions`;
@@ -236,7 +268,13 @@ export async function run(
         }
       }
 
-      const decision = await decide(observation, goal, history, answers);
+      const decision = await decide(
+        observation,
+        goal,
+        history,
+        answers,
+        stop.signal
+      );
       decisions.push({ ...decision, elapsedMs: since() });
       usage.input_tokens += decision.usage.input_tokens;
       usage.output_tokens += decision.usage.output_tokens;
@@ -323,25 +361,28 @@ export async function run(
             text = cached.value;
             textLatencyMs = cached.latencyMs;
           } else {
-            const generated = await fieldText({
-              goal,
-              field: {
-                label: action.label,
-                role: action.role,
-                value: action.currentValue ?? action.value,
-                // The field's own name is sometimes too local to act on. The
-                // dialog around it carries the rest: Google Flights names its
-                // origin field "Where else?" inside "Enter your origin".
-                group: action.group,
+            const generated = await fieldText(
+              {
+                goal,
+                field: {
+                  label: action.label,
+                  role: action.role,
+                  value: action.currentValue ?? action.value,
+                  // The field's own name is sometimes too local to act on. The
+                  // dialog around it carries the rest: Google Flights names its
+                  // origin field "Where else?" inside "Enter your origin".
+                  group: action.group,
+                },
+                page: {
+                  title: observation.title,
+                  text: observation.text.slice(0, 6000),
+                },
+                recent_actions: history
+                  .slice(-6)
+                  .map((entry) => ({ action: entry.action, text: entry.text })),
               },
-              page: {
-                title: observation.title,
-                text: observation.text.slice(0, 6000),
-              },
-              recent_actions: history
-                .slice(-6)
-                .map((entry) => ({ action: entry.action, text: entry.text })),
-            });
+              stop.signal
+            );
             text = generated.value;
             textLatencyMs = generated.latencyMs;
             if (text === "") {
@@ -398,10 +439,32 @@ export async function run(
           reason = "the page kept changing under every attempted action";
           break;
         }
+        // Input the page interrupted is recorded, not lost. A fill that had
+        // already clicked the field and selected its text when the page
+        // changed has touched the page; the classifier needs to see that,
+        // and the field may now hold something other than what it chose.
+        if (error.afterInput) {
+          const interrupted: HistoryEntry = {
+            step: history.length + 1,
+            action: `Interrupted while entering text into ${action.label}: the page changed before typing`,
+            kind: action.kind,
+            choice: action.id,
+            operation: decision.operation,
+            target: decision.target,
+            confidence: decision.confidence,
+            probability: decision.probabilities[action.id] ?? 0,
+            text: null,
+            latencyMs: decision.latencyMs,
+            textLatencyMs,
+            pageChanged: true,
+            url: observation.url,
+            elapsedMs: since(),
+            usage: decision.usage,
+          };
+          history.push(interrupted);
+          options.onStep?.(interrupted);
+        }
         observation = await look();
-        // Only a failure that happened before any input can be replayed. A
-        // fill that already clicked and pressed select-all has changed the
-        // page, so its decision has to be made again against what is there.
         continue;
       }
       staleRetries = 0;
@@ -470,6 +533,17 @@ export async function run(
         break;
       }
 
+      // Waiting is exempt from the no-progress rule, so it needs its own
+      // bound: on Peek it waited 18 times over two minutes.
+      if (action.kind === "wait")
+        idleWaits = entry.pageChanged ? 0 : idleWaits + 1;
+      else idleWaits = 0;
+      if (idleWaits >= 3) {
+        status = "blocked";
+        reason = "it waited three times and the page did not change";
+        break;
+      }
+
       const recent = history.slice(-3);
       const stuck =
         recent.length === 3 &&
@@ -482,10 +556,18 @@ export async function run(
       }
     }
   } catch (error) {
-    if (!(error instanceof BrowserTimeout)) throw error;
-    hung = true;
-    status = "blocked";
-    reason = "the browser stopped responding";
+    if (stop.signal.aborted) {
+      status = "blocked";
+      reason = stopReason();
+    } else {
+      if (!(error instanceof BrowserTimeout)) throw error;
+      hung = true;
+      status = "blocked";
+      reason = "the browser stopped responding";
+    }
+  } finally {
+    clearTimeout(budgetTimer);
+    options.signal?.removeEventListener("abort", onCancel);
   }
 
   return {

@@ -493,6 +493,47 @@ describe("the whole-task runner", () => {
     ]);
   }, 30_000);
 
+  it("stops a task that is cancelled part way through", async () => {
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "one",
+            goal: "Show the available times",
+            done_when: ["Start times are shown on the page"],
+          },
+          { id: "two", goal: "Pick a time", done_when: ["A time is selected"] },
+        ],
+        report: [],
+      },
+      operation: "WAIT",
+      holds: () => false,
+    });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(TIMES_PAGE);
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 800);
+
+    const result = await runTask(page, {
+      task: "Pick a time.",
+      signal: controller.signal,
+    });
+    await context.close();
+
+    expect(result.status).toBe("incomplete");
+    expect(result.subgoals[0]).toEqual(
+      expect.objectContaining({
+        id: "one",
+        status: "blocked",
+        reason: "the run was cancelled",
+      })
+    );
+    expect(result.subgoals[1]).toEqual(
+      expect.objectContaining({ status: "skipped" })
+    );
+  }, 30_000);
+
   it("refuses a plan with no usable subgoal", async () => {
     stubModels({
       plan: { subgoals: [], report: [] },

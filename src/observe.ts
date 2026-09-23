@@ -174,7 +174,8 @@ function fingerprint(
   markers: Record<string, string>,
   tabs: PageObservation["tabs"],
   scrollState: string[],
-  valueStates: string[]
+  valueStates: string[],
+  text: string
 ): string {
   // The frame's URL and its marker, never the assigned frame id. An id is
   // local to this process: attaching to the same browser from another process
@@ -196,8 +197,11 @@ function fingerprint(
   // progress, and the loop called it "stuck" until this was part of the
   // fingerprint.
   const valuePart = [...valueStates].sort().join("|");
+  // Visible text is here and not in the marker, for the same reason: new
+  // content is progress, but text changing elsewhere must not invalidate an
+  // action on a control that has not moved.
   return createHash("sha1")
-    .update(`${framePart}||${tabPart}||${scrollPart}||${valuePart}`)
+    .update(`${framePart}||${tabPart}||${scrollPart}||${valuePart}||${text}`)
     .digest("hex");
 }
 
@@ -387,7 +391,14 @@ export async function observe(
     url: active.url(),
     title: await active.title().catch(() => ""),
     text: textParts.join("\n"),
-    fingerprint: fingerprint(frames, markers, tabs, scrollState, valueStates),
+    fingerprint: fingerprint(
+      frames,
+      markers,
+      tabs,
+      scrollState,
+      valueStates,
+      textParts.join("\n")
+    ),
     frames,
     actions,
     guards,

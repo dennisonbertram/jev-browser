@@ -43,6 +43,32 @@ const TEXT_URL = `${TEXT_BASE_URL}/chat/completions`;
 const RETRY_STATUSES = new Set([429, 503, 529]);
 const RETRY_BACKOFFS_MS = [400, 1200];
 
+/**
+ * A request's signal: the caller's cancellation, when there is one, plus the
+ * request's own timeout. A cancelled run must not wait out a model call it
+ * no longer needs.
+ */
+function requestSignal(signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+/** A retry pause that ends early, with the abort reason, when cancelled. */
+function pause(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(signal.reason);
+      },
+      { once: true }
+    );
+  });
+}
+
 const OPERATION_DESCRIPTIONS: Record<Operation, string> = {
   CLICK: "Click an element.",
   TYPE_TEXT: "Enter text in a field.",
@@ -198,7 +224,10 @@ function validateChoice(
   };
 }
 
-export async function postTypeSafe(body: unknown): Promise<{
+export async function postTypeSafe(
+  body: unknown,
+  signal?: AbortSignal
+): Promise<{
   answers: Record<string, unknown>;
   usage?: { input_tokens: number; output_tokens: number };
 }> {
@@ -212,11 +241,11 @@ export async function postTypeSafe(body: unknown): Promise<{
         authorization: `Bearer ${key}`,
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
+      signal: requestSignal(signal),
+    });
     if (res.ok) return res.json();
     if (RETRY_STATUSES.has(res.status) && attempt < RETRY_BACKOFFS_MS.length) {
-      await new Promise((r) => setTimeout(r, RETRY_BACKOFFS_MS[attempt]));
+      await pause(RETRY_BACKOFFS_MS[attempt]!, signal);
       continue;
     }
     throw new Error(
@@ -238,7 +267,9 @@ export async function decide(
    * about 200 ms and tells us nothing new. A run repeats one about three
    * times, when a decision is discarded and the page settles back.
    */
-  cache?: Map<string, Decision>
+  cache?: Map<string, Decision>,
+  /** Cancels the request when the caller no longer needs the answer. */
+  signal?: AbortSignal
 ): Promise<Decision> {
   const space = actionSpace(observation.actions);
   const available = operationsFromSpace(space);
@@ -318,7 +349,7 @@ export async function decide(
     };
 
   const start = performance.now();
-  const json = await postTypeSafe(body);
+  const json = await postTypeSafe(body, signal);
   const latencyMs = Math.round(performance.now() - start);
   const usage = {
     input_tokens: json.usage?.input_tokens ?? 0,
@@ -404,15 +435,18 @@ export async function decide(
  * is asked again. A wrong-shaped answer is never typed.
  */
 export async function fieldText(
-  context: FieldTextContext
+  context: FieldTextContext,
+  signal?: AbortSignal
 ): Promise<{ value: string; model: string; latencyMs: number }> {
   let last: unknown;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      return await fieldTextOnce(context);
+      return await fieldTextOnce(context, signal);
     } catch (error) {
+      // A cancelled request is not a bad answer to retry.
+      if (signal?.aborted) throw error;
       last = error;
-      if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 250));
+      if (attempt < 3) await pause(attempt * 250, signal);
     }
   }
   throw new Error(
@@ -423,7 +457,8 @@ export async function fieldText(
 }
 
 async function fieldTextOnce(
-  context: FieldTextContext
+  context: FieldTextContext,
+  signal?: AbortSignal
 ): Promise<{ value: string; model: string; latencyMs: number }> {
   const token = process.env.TEXT_MODEL_API_KEY;
   if (!token) {
@@ -463,7 +498,7 @@ async function fieldTextOnce(
         { role: "user", content: JSON.stringify(context) },
       ],
     }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: requestSignal(signal),
   });
   const latencyMs = Math.round(performance.now() - start);
   if (!res.ok) {
@@ -516,7 +551,7 @@ async function fieldTextOnce(
 export async function textJson(
   system: string,
   user: unknown,
-  options: { model?: string } = {}
+  options: { model?: string; signal?: AbortSignal } = {}
 ): Promise<{ json: Record<string, unknown>; latencyMs: number }> {
   const token = process.env.TEXT_MODEL_API_KEY;
   if (!token) throw new Error("TEXT_MODEL_API_KEY is not set.");
@@ -543,7 +578,7 @@ export async function textJson(
             { role: "user", content: JSON.stringify(user) },
           ],
         }),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: requestSignal(options.signal),
       });
       if (!res.ok)
         throw new Error(`Text gateway request failed with status ${res.status}`);
@@ -558,8 +593,9 @@ export async function textJson(
         latencyMs: Math.round(performance.now() - start),
       };
     } catch (error) {
+      if (options.signal?.aborted) throw error;
       last = error;
-      if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 250));
+      if (attempt < 3) await pause(attempt * 250, options.signal);
     }
   }
   throw new Error(
