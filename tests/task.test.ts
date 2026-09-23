@@ -43,6 +43,8 @@ type Stubs = {
   items?: unknown[];
   /** Successive planner answers; the last one repeats. Overrides plan. */
   plans?: unknown[];
+  /** Successive classifier operations; the last one repeats. Overrides operation. */
+  operations?: string[];
 };
 
 /** Route each model request to a deterministic answer. */
@@ -51,7 +53,9 @@ function stubModels(stubs: Stubs): {
   checked: string[];
   goals: string[];
   planCalls: () => number;
+  planRequests: Record<string, unknown>[];
 } {
+  const planRequests: Record<string, unknown>[] = [];
   const checked: string[] = [];
   const goals: string[] = [];
   process.env.TYPESAFE_API_KEY = "test";
@@ -92,10 +96,13 @@ function stubModels(stubs: Stubs): {
             ),
           );
         const keys = Object.keys(question.criteria ?? {});
+        const wanted = stubs.operations
+          ? stubs.operations[
+              Math.min(classifierCalls, stubs.operations.length) - 1
+            ]!
+          : stubs.operation;
         const choice =
-          name === "operation" && keys.includes(stubs.operation)
-            ? stubs.operation
-            : keys[0]!;
+          name === "operation" && keys.includes(wanted) ? wanted : keys[0]!;
         answers[name] = {
           type: "choice",
           choice,
@@ -120,7 +127,12 @@ function stubModels(stubs: Stubs): {
         });
       });
     const planning = system.includes("You plan");
-    if (planning) planCalls += 1;
+    if (planning) {
+      planCalls += 1;
+      planRequests.push(
+        JSON.parse(String(body.messages?.[1]?.content ?? "{}")),
+      );
+    }
     const content = planning
       ? stubs.plans
         ? stubs.plans[Math.min(planCalls, stubs.plans.length) - 1]
@@ -151,6 +163,7 @@ function stubModels(stubs: Stubs): {
     checked,
     goals,
     planCalls: () => planCalls,
+    planRequests,
   };
 }
 
@@ -1442,4 +1455,148 @@ describe("the whole-task runner", () => {
     expect(result.facts.selected_date?.value).toBe("October 31, 2026");
     expect(result.status).toBe("incomplete");
   }, 60_000);
+
+  describe("re-planning and final checks, as seen on Peek", () => {
+    it("does not call the same value written two ways a conflict", async () => {
+      let reads = 0;
+      stubModels({
+        plan: {
+          subgoals: [
+            {
+              id: "read",
+              goal: "Show times",
+              done_when: ["Times are shown"],
+              collect: ["start_time"],
+            },
+          ],
+          report: ["start_time"],
+        },
+        operation: "CLICK",
+        holds: () => true,
+        facts: () => {
+          reads += 1;
+          return reads === 1
+            ? {
+                start_time: {
+                  value: "11:30 AM - 2 Hour(s)",
+                  quote: "11:30 AM - 2 Hour(s)",
+                },
+              }
+            : { start_time: { value: "11:30 AM", quote: "11:30 AM" } };
+        },
+      });
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.setContent(
+        `<p>11:30 AM - 2 Hour(s)</p><button>Reserve</button>`,
+      );
+
+      const result = await runTask(page, { task: "Report the start time." });
+      await context.close();
+
+      expect(result.conflicts).toEqual([]);
+      expect(result.status).toBe("done");
+    }, 60_000);
+
+    it("counts a step done when the classifier says so and every fact it reads is quoted", async () => {
+      stubModels({
+        plan: {
+          subgoals: [
+            {
+              id: "read",
+              goal: "Read the times",
+              done_when: ["A list of start times is displayed"],
+              collect: ["start_time"],
+            },
+          ],
+          report: ["start_time"],
+        },
+        // As on Peek: a claim, a click on the date field, then the claim again.
+        operation: "DONE",
+        operations: ["DONE", "CLICK", "DONE"],
+        holds: () => false,
+        facts: { start_time: { value: "11:30 AM", quote: "11:30 AM" } },
+      });
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.setContent(
+        `<p>11:30 AM - 2 Hour(s)</p><button>Reserve</button>`,
+      );
+
+      const result = await runTask(page, { task: "Report the start time." });
+      await context.close();
+
+      expect(result.subgoals[0]).toEqual(
+        expect.objectContaining({ status: "done" }),
+      );
+    }, 60_000);
+
+    it("re-plans knowing the plan so far and each chosen value in full", async () => {
+      const stub = stubModels({
+        plan: {},
+        plans: [
+          {
+            subgoals: [
+              {
+                id: "pick",
+                goal: "Click {earliest_date}",
+                done_when: ["{earliest_date} is selected"],
+                collect: [],
+                choose: {
+                  name: "earliest_date",
+                  items: "enabled dates",
+                  by: "date",
+                  order: "min",
+                },
+              },
+              {
+                id: "stuck",
+                goal: "Do the impossible",
+                done_when: ["Never true"],
+                collect: [],
+              },
+            ],
+            report: [],
+          },
+          {
+            subgoals: [
+              {
+                id: "end",
+                goal: "Finish",
+                done_when: ["Finished"],
+                collect: [],
+              },
+            ],
+            report: [],
+          },
+        ],
+        operation: "CLICK",
+        holds: (statement) => statement !== "Never true",
+        items: [{ key: "3", value: "October 3, 2026", quote: "3" }],
+      });
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.setContent(
+        `<h2>October 2026</h2><button>3</button><button>10</button>`,
+      );
+
+      await runTask(page, { task: "Pick the earliest date." });
+      await context.close();
+
+      const replan = stub.planRequests[1]!;
+      expect(replan.plan_so_far).toEqual([
+        expect.objectContaining({
+          goal: "Click 3 (October 3, 2026)",
+          status: "done",
+        }),
+        expect.objectContaining({
+          goal: "Do the impossible",
+          status: "blocked",
+        }),
+      ]);
+      expect(replan.known_facts).toEqual(
+        expect.objectContaining({ earliest_date: "3 (October 3, 2026)" }),
+      );
+    }, 60_000);
+  });
 });

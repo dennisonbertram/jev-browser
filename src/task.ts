@@ -157,17 +157,26 @@ export async function runTask(
     }
     const page = await observe(context, { diagnostics: false });
     const next = await makePlan(task, page, now, options.signal, {
-      done: subgoals
-        .filter((subgoal) => subgoal.status === "done")
-        .map((subgoal) => subgoal.goal),
+      plan_so_far: subgoals.map((subgoal) => ({
+        goal: subgoal.goal,
+        status: subgoal.status,
+        reason: subgoal.reason,
+      })),
       failed: { goal: failed.goal, reason: failed.reason },
+      // A chosen value with its detail: on Peek a re-plan knew only "3",
+      // re-derived "next month" from the calendar, and chose November 7.
       known_facts: Object.fromEntries(
         Object.entries(facts)
           .filter(([, fact]) => fact.supported)
-          .map(([name, fact]) => [name, fact.value]),
+          .map(([name, fact]) => [
+            name,
+            fact.detail && fact.detail !== fact.value
+              ? `${fact.value} (${fact.detail})`
+              : fact.value,
+          ]),
       ),
       problem:
-        "A step failed. Plan the rest of the task from the page as it is now. Do not repeat the failed step unchanged: find another way, such as another control, going back, or a different route through the site. Name known facts as {name}.",
+        "A step failed. Plan only the rest of the task, from the page as it is now. Keep the work already done: do not redo a done step unless the page shows its result undone, and keep every known fact and choice. Relative dates in the task are relative to today, not to what the page shows. Do not repeat the failed step unchanged: find another way, such as another control, going back, or a different route through the site. Name known facts as {name}.",
     }).catch(() => null);
     if (!next) {
       stopped = true;
@@ -316,8 +325,12 @@ export async function runTask(
     subgoals.push(record);
     const stoppedOutside =
       options.signal?.aborted || performance.now() > deadline;
-    // Only a step that did nothing but wait is a pure reading step.
-    const onlyRead = result.history.every((entry) => entry.kind === "wait");
+    // A pure reading step did nothing but wait; or the classifier, at the
+    // end, judged the goal done. Either way the facts decide it. A step
+    // that kept acting without claiming done is not one.
+    const onlyRead =
+      result.history.every((entry) => entry.kind === "wait") ||
+      result.decisions.at(-1)?.operation === "DONE";
     if (
       result.status !== "done" &&
       (subgoal.collect.length === 0 || stoppedOutside || !onlyRead)
@@ -911,9 +924,12 @@ function shows(quote: string, value: string): boolean {
   );
 }
 
-/** Whether two readings state the same value: the same numbers and words. */
+/**
+ * Whether two readings agree: one states everything the other does. "11:30
+ * AM - 2 Hour(s)" and "11:30 AM" agree; "October 3" and "October 31" do not.
+ */
 function sameValue(a: string, b: string): boolean {
-  return shows(a, b) && shows(b, a);
+  return shows(a, b) || shows(b, a);
 }
 
 function normalise(text: string): string {
