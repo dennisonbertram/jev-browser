@@ -10,6 +10,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { chromium, type Browser } from "playwright";
 import { observe, runTask } from "../src/index.js";
+import { comparable } from "../src/task.js";
 
 let browser: Browser;
 const realFetch = globalThis.fetch;
@@ -807,7 +808,9 @@ describe("the whole-task runner", () => {
   }, 30_000);
 
   describe("choosing and comparing in code", () => {
-    const SHOP = `<ul><li>Blue mug $1,050</li><li>Red mug $980</li></ul><button>Filter</button>`;
+    // Options are links, as on a real listing: a choice must be something
+    // the page offers to act on.
+    const SHOP = `<ul><li><a href="#b">Blue mug</a> $1,050</li><li><a href="#r">Red mug</a> $980</li></ul><button>Filter</button>`;
 
     it("chooses among quoted candidates in code, and names the choice in later steps", async () => {
       const stub = stubModels({
@@ -983,7 +986,7 @@ describe("the whole-task runner", () => {
       const context = await browser.newContext();
       const page = await context.newPage();
       await page.setContent(
-        `<p>11:30 AM</p><p>2:00 PM</p><p>9:15 AM</p><button>More</button>`,
+        `<button>11:30 AM</button><button>2:00 PM</button><button>9:15 AM</button>`,
       );
 
       const result = await runTask(page, { task: "Find the earliest time." });
@@ -1169,7 +1172,7 @@ describe("the whole-task runner", () => {
     const context = await browser.newContext();
     const page = await context.newPage();
     await page.setContent(`<ul id="list"></ul><button>Filter</button>
-      <script>setTimeout(() => { document.getElementById('list').innerHTML = '<li>Red mug $980</li>'; }, 1200);</script>`);
+      <script>setTimeout(() => { document.getElementById('list').innerHTML = '<li><a href=#r>Red mug</a> $980</li>'; }, 1200);</script>`);
 
     const result = await runTask(page, { task: "Open the cheapest mug." });
     await context.close();
@@ -1323,13 +1326,17 @@ describe("the whole-task runner", () => {
   }, 60_000);
 
   describe("re-planning", () => {
-    const STUCK = `<button>Nothing</button><p>Times: 9:00 AM</p>`;
+    // Times appear only once Show is clicked. A blocked step counts as
+    // recovered only when its end condition holds on the final page.
+    const STUCK = `<button onclick="document.getElementById('o').textContent = 'Times: 9:00 AM'">Show</button><p id="o"></p>`;
+    const timesShown = (_statement: string, text: string) =>
+      text.includes("Times:");
     const stuckPlan = {
       subgoals: [
         {
           id: "a",
           goal: "Do the impossible",
-          done_when: ["Never true"],
+          done_when: ["Times are shown"],
           collect: [],
         },
       ],
@@ -1355,7 +1362,7 @@ describe("the whole-task runner", () => {
           recoveryPlan,
         ],
         operation: "CLICK",
-        holds: (statement) => statement === "Times are shown",
+        holds: timesShown,
       });
       const context = await browser.newContext();
       const page = await context.newPage();
@@ -1373,7 +1380,9 @@ describe("the whole-task runner", () => {
         plan: {},
         plans: [stuckPlan, recoveryPlan],
         operation: "CLICK",
-        holds: (statement) => statement === "Times are shown",
+        // The first step is judged unreachable; the re-plan clicks Show.
+        operations: ["BLOCKED", "CLICK"],
+        holds: timesShown,
       });
       const context = await browser.newContext();
       const page = await context.newPage();
@@ -1599,4 +1608,447 @@ describe("the whole-task runner", () => {
       );
     }, 60_000);
   });
+});
+
+describe("fixes from the reviews of steps 4 and 5", () => {
+  const page = async (html: string) => {
+    const context = await browser.newContext();
+    const tab = await context.newPage();
+    await tab.setContent(html);
+    return { context, tab };
+  };
+
+  it("does not count a step that must select a value as read, when the value is wrong", async () => {
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "pick",
+            goal: "Select October 3",
+            done_when: ["October 3, 2026 is selected"],
+            collect: ["selected_date"],
+          },
+        ],
+        report: ["selected_date"],
+      },
+      operation: "DONE",
+      holds: () => false,
+      facts: {
+        selected_date: { value: "October 31, 2026", quote: "October 31, 2026" },
+      },
+    });
+    const { context, tab } = await page(
+      `<p>October 31, 2026</p><button>3</button>`,
+    );
+    const result = await runTask(tab, { task: "Select October 3." });
+    await context.close();
+
+    expect(result.subgoals[0]!.status).toBe("blocked");
+    expect(result.status).toBe("incomplete");
+  }, 60_000);
+
+  it("chooses only options the page offers, each paired with its own value", async () => {
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "open",
+            goal: "Open {cheapest_mug}",
+            done_when: ["{cheapest_mug} is shown"],
+            collect: [],
+            choose: {
+              name: "cheapest_mug",
+              items: "mugs",
+              by: "price",
+              order: "min",
+            },
+          },
+        ],
+        report: ["cheapest_mug"],
+      },
+      operation: "CLICK",
+      holds: () => true,
+      items: [
+        // A real control, but paired with another option's price.
+        { key: "Blue mug", value: "$5", quote: "$5" },
+        // On the page, but not something it offers to act on.
+        { key: "Green mug", value: "$1", quote: "Green mug $1" },
+        { key: "Red mug", value: "$980", quote: "Red mug $980" },
+      ],
+    });
+    const { context, tab } = await page(
+      `<ul><li><a href="#b">Blue mug</a> $1,050</li><li><a href="#r">Red mug</a> $980</li><li>Green mug $1 (sold out)</li></ul><p>$5 off today</p>`,
+    );
+    const result = await runTask(tab, { task: "Open the cheapest mug." });
+    await context.close();
+
+    expect(result.facts.cheapest_mug?.value).toBe("Red mug");
+  }, 60_000);
+
+  it("chooses among a select's options, not only the one already selected", async () => {
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "plan",
+            goal: "Choose {cheapest_plan}",
+            done_when: ["{cheapest_plan} is chosen"],
+            collect: [],
+            choose: {
+              name: "cheapest_plan",
+              items: "plans",
+              by: "price",
+              order: "min",
+            },
+          },
+        ],
+        report: ["cheapest_plan"],
+      },
+      operation: "CLICK",
+      holds: () => true,
+      items: [
+        { key: "Basic $5", value: "$5", quote: "Basic $5" },
+        { key: "Premium $20", value: "$20", quote: "Premium $20" },
+      ],
+    });
+    const { context, tab } = await page(
+      `<label>Plan <select><option>Basic $5</option><option selected>Premium $20</option></select></label>`,
+    );
+    const result = await runTask(tab, { task: "Choose the cheapest plan." });
+    await context.close();
+
+    expect(result.facts.cheapest_plan?.value).toBe("Basic $5");
+  }, 60_000);
+
+  it("orders ISO dates, dates without a year, free prices, and dates with times", () => {
+    const year = new Date().getFullYear();
+    expect(comparable("2026-10-03")! > comparable("2026-09-30")!).toBe(true);
+    expect(comparable(`October 3`)).toBe(comparable(`October 3, ${year}`));
+    expect(comparable("Free")).toBe(0);
+    expect(
+      comparable("October 3, 2026 9:00 AM")! <
+        comparable("October 3, 2026 11:30 AM")!,
+    ).toBe(true);
+    expect(
+      comparable("October 3, 2026 9:00 AM")! >
+        comparable("October 2, 2026 11:30 AM")!,
+    ).toBe(true);
+  });
+
+  it("never lets a model's reading stand in for a comparison made in code", async () => {
+    stubModels({
+      plan: {
+        subgoals: [
+          { id: "a", goal: "Show", done_when: ["Shown"], collect: ["a", "b"] },
+        ],
+        report: ["a", "b", "winner"],
+        derive: [{ name: "winner", among: { A: "a", B: "b" }, order: "max" }],
+      },
+      operation: "CLICK",
+      holds: () => true,
+      facts: {
+        a: { value: "1", quote: "A 1" },
+        b: { value: "2", quote: "B 2" },
+        winner: { value: "A", quote: "A 1" },
+      },
+    });
+    const { context, tab } = await page(
+      `<p>A 1</p><p>B 2</p><button>Go</button>`,
+    );
+    const result = await runTask(tab, { task: "Which is larger?" });
+    await context.close();
+
+    expect(result.facts.winner?.value).toBe("B");
+  }, 60_000);
+
+  it("types nothing in a step that was given no inputs", async () => {
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "a",
+            goal: "Fill the form",
+            done_when: ["Never true"],
+            collect: [],
+          },
+        ],
+        report: [],
+      },
+      operation: "CLICK",
+      operations: ["TYPE_TEXT"],
+      holds: () => false,
+    });
+    const { context, tab } = await page(
+      `<label>City <input id="city"></label>`,
+    );
+    process.env.TEXT_MODEL_API_KEY = "test";
+    // The text model's answer in this stub is "" for fields; make it invent.
+    const stubbed = globalThis.fetch;
+    globalThis.fetch = (async (
+      url: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      if (
+        String(body.messages?.[0]?.content ?? "").startsWith(
+          "Return a JSON object with exactly one key",
+        )
+      )
+        return Response.json({
+          choices: [
+            { message: { content: JSON.stringify({ text: "San Francisco" }) } },
+          ],
+        });
+      return stubbed(url, init);
+    }) as typeof fetch;
+    await runTask(tab, { task: "Fill the form." });
+    const typed = await tab.inputValue("#city");
+    await context.close();
+
+    expect(typed).toBe("");
+  }, 90_000);
+
+  it("fills an input that names a fact, and the goal that names the input", async () => {
+    stubModels({
+      plan: {},
+      plans: [
+        {
+          subgoals: [
+            {
+              id: "read",
+              goal: "Read the city",
+              done_when: ["City is shown"],
+              collect: ["place"],
+            },
+            {
+              id: "type",
+              goal: "Type {destination}",
+              done_when: ["{destination} is entered"],
+              collect: [],
+              inputs: { destination: "{place}" },
+            },
+          ],
+          report: [],
+        },
+      ],
+      operation: "CLICK",
+      holds: () => true,
+      facts: { place: { value: "London", quote: "London" } },
+    });
+    const { context, tab } = await page(`<p>London</p><button>Go</button>`);
+    const result = await runTask(tab, { task: "Enter the city." });
+    await context.close();
+
+    expect(result.subgoals[1]!.goal).toBe("Type London");
+  }, 60_000);
+
+  it("keeps a short product name in checks rather than its price", async () => {
+    const stub = stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "pick",
+            goal: "Open {cheapest}",
+            done_when: ["{cheapest} is selected"],
+            collect: [],
+            choose: {
+              name: "cheapest",
+              items: "products",
+              by: "price",
+              order: "min",
+            },
+          },
+        ],
+        report: [],
+      },
+      operation: "CLICK",
+      holds: () => true,
+      items: [{ key: "Go", value: "$5", quote: "Go $5" }],
+    });
+    const { context, tab } = await page(`<p><a href="#go">Go</a> $5</p>`);
+    await runTask(tab, { task: "Open the cheapest." });
+    await context.close();
+
+    expect(stub.checked).toContain("Go is selected");
+  }, 60_000);
+
+  it("is not done when a blocked step's outcome was never recovered", async () => {
+    stubModels({
+      plan: {},
+      plans: [
+        {
+          subgoals: [
+            {
+              id: "save",
+              goal: "Save the settings",
+              done_when: ["Settings are saved"],
+              collect: [],
+            },
+          ],
+          report: [],
+        },
+        {
+          subgoals: [
+            {
+              id: "help",
+              goal: "Open help",
+              done_when: ["Help is shown"],
+              collect: [],
+            },
+          ],
+          report: [],
+        },
+      ],
+      operation: "CLICK",
+      holds: (statement) => statement === "Help is shown",
+    });
+    const { context, tab } = await page(
+      `<button>Save</button><button>Help</button>`,
+    );
+    const result = await runTask(tab, { task: "Save the settings." });
+    await context.close();
+
+    expect(result.status).toBe("incomplete");
+  }, 90_000);
+
+  it("reports a verified fact that is no longer on the final page", async () => {
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "pick",
+            goal: "Pick",
+            done_when: ["Picked"],
+            collect: ["selected_date"],
+          },
+          {
+            id: "clear",
+            goal: "Click Clear",
+            done_when: ["Cleared"],
+            collect: [],
+          },
+        ],
+        report: ["selected_date"],
+      },
+      operation: "CLICK",
+      holds: (statement, text) =>
+        statement !== "Cleared" || !text.includes("October"),
+      facts: (text) =>
+        text.includes("October 3, 2026")
+          ? {
+              selected_date: {
+                value: "October 3, 2026",
+                quote: "October 3, 2026",
+              },
+            }
+          : { selected_date: { value: "", quote: "" } },
+    });
+    const { context, tab } = await page(
+      `<p id="d">October 3, 2026</p><button onclick="document.getElementById('d').textContent = ''">Clear</button>`,
+    );
+    const result = await runTask(tab, { task: "Pick October 3." });
+    await context.close();
+
+    expect(result.conflicts.map((c) => c.name)).toEqual(["selected_date"]);
+    expect(result.status).toBe("incomplete");
+  }, 60_000);
+
+  it("records a conflict when a later step reads a different value under the same name", async () => {
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "a",
+            goal: "Pick",
+            done_when: ["Picked"],
+            collect: ["selected_date"],
+          },
+          {
+            id: "b",
+            goal: "Click Other",
+            done_when: ["Other"],
+            collect: ["selected_date"],
+          },
+        ],
+        report: ["selected_date"],
+      },
+      operation: "CLICK",
+      holds: (statement, text) => statement !== "Other" || text.includes("31"),
+      facts: (text) => {
+        const date = /October \d+, 2026/u.exec(text)?.[0] ?? "";
+        return { selected_date: { value: date, quote: date } };
+      },
+    });
+    const { context, tab } = await page(
+      `<p id="s">October 3, 2026</p><button onclick="document.getElementById('s').textContent = 'October 31, 2026'">Other</button>`,
+    );
+    const result = await runTask(tab, { task: "Pick October 3." });
+    await context.close();
+
+    expect(result.conflicts).toEqual([
+      {
+        name: "selected_date",
+        earlier: "October 3, 2026",
+        final: "October 31, 2026",
+      },
+    ]);
+  }, 60_000);
+
+  it("tells morning from evening, and one thousand from 1,000", async () => {
+    for (const [first, second, differ] of [
+      ["9:00 AM", "9:00 PM", true],
+      ["$1,000", "$1000", false],
+      ["$10.50", "$50.10", true],
+    ] as const) {
+      let reads = 0;
+      stubModels({
+        plan: {
+          subgoals: [
+            { id: "a", goal: "Show", done_when: ["Shown"], collect: ["v"] },
+          ],
+          report: ["v"],
+        },
+        operation: "CLICK",
+        holds: () => true,
+        facts: () => {
+          reads += 1;
+          const value = reads === 1 ? first : second;
+          return { v: { value, quote: value } };
+        },
+      });
+      const { context, tab } = await page(
+        `<p>9:00 AM 9:00 PM $1,000 $1000 $10.50 $50.10</p><button>Go</button>`,
+      );
+      const result = await runTask(tab, { task: "Show v." });
+      await context.close();
+      expect([first, second, result.conflicts.length > 0]).toEqual([
+        first,
+        second,
+        differ,
+      ]);
+    }
+  }, 120_000);
+
+  it("keeps re-planning and the final check within the task's time budget", async () => {
+    stubModels({
+      plan: {
+        subgoals: [
+          { id: "a", goal: "Show", done_when: ["Shown"], collect: ["v"] },
+        ],
+        report: ["v"],
+      },
+      operation: "CLICK",
+      holds: () => true,
+      facts: { v: { value: "", quote: "" } },
+      extractDelayMs: 20_000,
+    });
+    const { context, tab } = await page(`<p>1</p><button>Go</button>`);
+    const started = Date.now();
+    const result = await runTask(tab, { task: "Show v.", deadlineMs: 3_000 });
+    const took = Date.now() - started;
+    await context.close();
+
+    expect(took).toBeLessThan(6_000);
+    expect(result.status).toBe("incomplete");
+  }, 60_000);
 });

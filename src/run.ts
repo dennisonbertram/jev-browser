@@ -152,10 +152,12 @@ function oscillating(history: HistoryEntry[]): boolean {
   const same = (a: HistoryEntry, b: HistoryEntry) =>
     a.kind === b.kind && a.action === b.action;
 
+  // Going back repeatedly visits a different page each time, so it is not
+  // a repeat; going back and forth to the same page still is.
   const four = history.slice(-4);
   if (
     four.length === 4 &&
-    !four.some(repeats) &&
+    !four.some((entry) => repeats(entry) || entry.kind === "back") &&
     four.every((entry) => same(entry, four[0]!))
   )
     return true;

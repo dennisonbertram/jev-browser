@@ -131,32 +131,64 @@ export async function runTask(
   // The same budget as wall-clock time, for each subgoal's run, so a subgoal
   // cannot outlive the task.
   const deadlineAt = Date.now() + budgetMs;
+  // Every model call the task makes itself, including re-plans and the
+  // final check, stops with the caller's signal or the budget.
+  const stop = AbortSignal.any([
+    ...(options.signal ? [options.signal] : []),
+    AbortSignal.timeout(budgetMs),
+  ]);
+  const cut = () => stop.aborted || performance.now() > deadline;
+  // A cancelled or timed-out model call leaves the task incomplete, not
+  // failed.
+  const unlessCut =
+    <T>(fallback: T) =>
+    (error: unknown): T => {
+      if (!stop.aborted) throw error;
+      stopped = true;
+      return fallback;
+    };
 
   const now = options.now ?? new Date();
   const first = await observe(context, { diagnostics: false });
-  const plan = await makePlan(task, first, now, options.signal);
+  const plan = await makePlan(task, first, now, stop);
 
   const subgoals: SubgoalResult[] = [];
   const facts: Record<string, Fact> = {};
+  const conflicts: TaskResult["conflicts"] = [];
   let stopped = false;
   let queue = [...plan.subgoals];
   const replans: TaskPlan[] = [];
   const report = new Set(plan.report);
   const derivations = [...(plan.derive ?? [])];
+  // Blocked steps, to check at the end whether a later plan recovered them.
+  const unrecovered: { result: SubgoalResult; planned: Subgoal }[] = [];
+
+  // A fact read again under the same name with a different value is a
+  // conflict: a later step changed what an earlier one verified.
+  const keep = (name: string, fact: Fact) => {
+    const earlier = facts[name];
+    if (earlier?.supported && !fact.supported) return;
+    if (
+      earlier?.supported &&
+      fact.supported &&
+      !sameValue(earlier.value!, fact.value!)
+    )
+      conflicts.push({ name, earlier: earlier.value!, final: fact.value! });
+    facts[name] = fact;
+  };
+
   // A blocked step is a surprise: the rest of the task is planned again from
   // the page as it is now, knowing what is done and what failed. Bounded, so
   // a task that cannot be done ends.
-  const blocked = async (failed: SubgoalResult, index: number) => {
-    if (
-      replans.length >= MAX_REPLANS ||
-      options.signal?.aborted ||
-      performance.now() > deadline
-    ) {
+  const blocked = async (planned: Subgoal, index: number) => {
+    const failed = subgoals[subgoals.length - 1]!;
+    unrecovered.push({ result: failed, planned });
+    if (replans.length >= MAX_REPLANS || cut()) {
       stopped = true;
       return;
     }
     const page = await observe(context, { diagnostics: false });
-    const next = await makePlan(task, page, now, options.signal, {
+    const next = await makePlan(task, page, now, stop, {
       plan_so_far: subgoals.map((subgoal) => ({
         goal: subgoal.goal,
         status: subgoal.status,
@@ -168,12 +200,7 @@ export async function runTask(
       known_facts: Object.fromEntries(
         Object.entries(facts)
           .filter(([, fact]) => fact.supported)
-          .map(([name, fact]) => [
-            name,
-            fact.detail && fact.detail !== fact.value
-              ? `${fact.value} (${fact.detail})`
-              : fact.value,
-          ]),
+          .map(([name, fact]) => [name, spoken(fact, "act")]),
       ),
       problem:
         "A step failed. Plan only the rest of the task, from the page as it is now. Keep the work already done: do not redo a done step unless the page shows its result undone, and keep every known fact and choice. Relative dates in the task are relative to today, not to what the page shows. Do not repeat the failed step unchanged: find another way, such as another control, going back, or a different route through the site. Name known facts as {name}.",
@@ -187,11 +214,27 @@ export async function runTask(
     for (const name of next.report) report.add(name);
     derivations.push(...(next.derive ?? []));
   };
+
   for (let index = 0; index < queue.length; index += 1) {
     const planned = queue[index]!;
+    if (stopped || cut()) {
+      subgoals.push({
+        id: planned.id,
+        goal: planned.goal,
+        status: "skipped",
+        reason: stopped
+          ? "an earlier subgoal did not finish"
+          : options.signal?.aborted
+            ? "the task was cancelled"
+            : "the task's time budget ran out",
+        elapsedMs: 0,
+        actions: 0,
+      });
+      continue;
+    }
     // A choice is made from the page the subgoal starts on, which is where
     // the previous one left the options; the subgoal then acts on it.
-    if (!stopped && planned.choose && !options.signal?.aborted) {
+    if (planned.choose) {
       const choice = planned.choose;
       // Options often load after the page that shows them: on Peek the
       // month heading changed before that month's dates were available. An
@@ -204,20 +247,12 @@ export async function runTask(
         if (attempt > 0)
           await new Promise((resolve) => setTimeout(resolve, CHOICE_RETRY_MS));
         const page = await observe(context, { diagnostics: false });
-        picked = await chooseOption(
-          task,
-          choice,
-          page,
-          planned.id,
-          options.signal,
-        ).catch((error: unknown) => {
-          if (options.signal?.aborted)
-            return { picked: null, why: "the task was cancelled" };
-          throw error;
-        });
-        if (picked.picked || options.signal?.aborted) break;
+        picked = await chooseOption(task, choice, page, planned.id, stop).catch(
+          unlessCut({ picked: null, why: "the task was stopped" }),
+        );
+        if (picked.picked || stop.aborted) break;
       }
-      if (picked.picked) facts[choice.name] = picked.picked;
+      if (picked.picked) keep(choice.name, picked.picked);
       else {
         subgoals.push({
           id: planned.id,
@@ -227,74 +262,21 @@ export async function runTask(
           elapsedMs: 0,
           actions: 0,
         });
-        await blocked(subgoals[subgoals.length - 1]!, index);
+        await blocked(planned, index);
         continue;
       }
     }
-    // A value chosen or read earlier, or one of this subgoal's own inputs,
-    // named as {name}, is filled in now.
-    // A chosen option is named by its label in an instruction, with its
-    // detail beside it, and by its detail in a check: on Peek, "3 is
-    // selected" could not be confirmed and "October 3, 2026 is selected" can.
-    const unknown = new Set<string>();
-    const fill = (text: string, use: "act" | "check" | "type") =>
-      text.replace(/\{([a-z0-9_]+)\}/giu, (whole, name: string) => {
-        const own = planned.inputs?.[name];
-        if (own !== undefined) return own;
-        const fact = facts[name];
-        if (!fact?.supported || !fact.value) {
-          unknown.add(name);
-          return whole;
-        }
-        // Only a fuller form of the name stands in for it: a date for its
-        // day, never a price for a product.
-        if (
-          !fact.detail ||
-          use === "type" ||
-          normalise(fact.detail) === normalise(fact.value) ||
-          !shows(fact.detail, fact.value)
-        )
-          return fact.value;
-        return use === "check" ? fact.detail : `${fact.value} (${fact.detail})`;
-      });
-    const subgoal: Subgoal = {
-      ...planned,
-      goal: fill(planned.goal, "act"),
-      done_when: planned.done_when.map((statement) => fill(statement, "check")),
-      ...(planned.inputs && {
-        inputs: Object.fromEntries(
-          Object.entries(planned.inputs).map(([key, value]) => [
-            key,
-            fill(value, "type"),
-          ]),
-        ),
-      }),
-    };
-    if (!stopped && unknown.size > 0) {
+    const { subgoal, unknown } = resolve(planned, facts);
+    if (unknown.length > 0) {
       subgoals.push({
         id: subgoal.id,
         goal: subgoal.goal,
         status: "blocked",
-        reason: `it needs ${[...unknown].join(", ")}, which was not found`,
+        reason: `it needs ${unknown.join(", ")}, which was not found`,
         elapsedMs: 0,
         actions: 0,
       });
-      await blocked(subgoals[subgoals.length - 1]!, index);
-      continue;
-    }
-    if (stopped || options.signal?.aborted || performance.now() > deadline) {
-      subgoals.push({
-        id: subgoal.id,
-        goal: subgoal.goal,
-        status: "skipped",
-        reason: stopped
-          ? "an earlier subgoal did not finish"
-          : options.signal?.aborted
-            ? "the task was cancelled"
-            : "the task's time budget ran out",
-        elapsedMs: 0,
-        actions: 0,
-      });
+      await blocked(planned, index);
       continue;
     }
     const subgoalStarted = performance.now();
@@ -304,7 +286,8 @@ export async function runTask(
       // button", the classifier clicked once, the calendar did not open,
       // and it declared the goal done.
       goal: `${subgoal.goal}. Done when: ${subgoal.done_when.join("; ")}.`,
-      inputs: subgoal.inputs,
+      // A step with no inputs types nothing.
+      inputs: subgoal.inputs ?? {},
       signal: options.signal,
       deadlineAt,
       // The run's own signal, which also fires when the budget runs out.
@@ -323,19 +306,21 @@ export async function runTask(
         .length,
     };
     subgoals.push(record);
-    const stoppedOutside =
-      options.signal?.aborted || performance.now() > deadline;
-    // A pure reading step did nothing but wait; or the classifier, at the
-    // end, judged the goal done. Either way the facts decide it. A step
-    // that kept acting without claiming done is not one.
-    const onlyRead =
-      result.history.every((entry) => entry.kind === "wait") ||
-      result.decisions.at(-1)?.operation === "DONE";
+    // A pure reading step: its end conditions only say that something is
+    // shown, naming no value, and it did nothing but wait or ended with the
+    // classifier judging the goal done. Its facts decide it. A step that
+    // must reach a stated value, or kept acting, is not one.
+    const reading =
+      subgoal.done_when.every(
+        (statement) => SHOWN.test(statement) && !/\d/u.test(statement),
+      ) &&
+      (result.history.every((entry) => entry.kind === "wait") ||
+        result.decisions.at(-1)?.operation === "DONE");
     if (
       result.status !== "done" &&
-      (subgoal.collect.length === 0 || stoppedOutside || !onlyRead)
+      (subgoal.collect.length === 0 || cut() || !reading)
     ) {
-      await blocked(subgoals[subgoals.length - 1]!, index);
+      await blocked(planned, index);
       continue;
     }
     if (subgoal.collect.length > 0) {
@@ -346,15 +331,9 @@ export async function runTask(
         subgoal.collect,
         page,
         subgoal.id,
-        options.signal,
-      ).catch((error: unknown) => {
-        if (options.signal?.aborted) return {} as Record<string, Fact>;
-        throw error;
-      });
-      for (const [name, fact] of Object.entries(read)) {
-        // A supported value is never replaced by an unsupported one.
-        if (!facts[name]?.supported || fact.supported) facts[name] = fact;
-      }
+        stop,
+      ).catch(unlessCut({} as Record<string, Fact>));
+      for (const [name, fact] of Object.entries(read)) keep(name, fact);
       // A step that reads is checked by what it reads: each fact is kept
       // only with a quote from the page. On Peek the planner kept waiting
       // for "the start times list" beside the one start time there was.
@@ -363,7 +342,7 @@ export async function runTask(
           record.status = "done";
           record.reason = "every fact it reads is on the page";
         } else {
-          await blocked(subgoals[subgoals.length - 1]!, index);
+          await blocked(planned, index);
           continue;
         }
       }
@@ -375,18 +354,28 @@ export async function runTask(
   // field that updated after the step that read it, gets another reading;
   // and a fact read from this same page is checked again, because a later
   // step can undo it: on Peek, wandering after the date was verified moved
-  // it to October 31. Facts from other pages and chosen options are
-  // history, not state, and are not re-read.
-  const conflicts: TaskResult["conflicts"] = [];
-  if (!stopped && !options.signal?.aborted) {
+  // it to October 31. Facts from other pages are history, not state.
+  // Choices and comparisons are made in code and never read here.
+  // ponytail: a chosen option is not re-checked at the end; reading "which
+  // date is chosen" back risks false conflicts.
+  const computed = new Set([
+    ...derivations.map((derivation) => derivation.name),
+    ...queue.flatMap((subgoal) =>
+      subgoal.choose ? [subgoal.choose.name] : [],
+    ),
+  ]);
+  let recovered = true;
+  if (!stopped && !cut()) {
     const page = await observe(context, { diagnostics: false });
-    const unread = [...report].filter((name) => !facts[name]?.supported);
+    const unread = [...report].filter(
+      (name) => !facts[name]?.supported && !computed.has(name),
+    );
     const recheck = [...report].filter((name) => {
       const fact = facts[name];
       return (
         fact?.supported &&
+        !computed.has(name) &&
         fact.detail === undefined &&
-        fact.subgoal !== "derived" &&
         fact.url === page.url
       );
     });
@@ -396,28 +385,48 @@ export async function runTask(
         [...unread, ...recheck],
         page,
         "final",
-        options.signal,
-      ).catch((error: unknown) => {
-        if (options.signal?.aborted) return {} as Record<string, Fact>;
-        throw error;
-      });
-      for (const name of unread)
-        if (read[name]?.supported) facts[name] = read[name]!;
-      for (const name of recheck) {
-        const earlier = facts[name]!.value!;
-        const now = read[name];
-        if (!now?.supported || sameValue(earlier, now.value!)) continue;
-        conflicts.push({ name, earlier, final: now.value! });
-        facts[name] = now;
+        stop,
+      ).catch(unlessCut({} as Record<string, Fact>));
+      if (!stopped) {
+        for (const name of unread)
+          if (read[name]?.supported) facts[name] = read[name]!;
+        for (const name of recheck) {
+          const earlier = facts[name]!.value!;
+          const now = read[name];
+          if (now?.supported && sameValue(earlier, now.value!)) continue;
+          // Gone from the page it was read on is a change too.
+          conflicts.push({
+            name,
+            earlier,
+            final: now?.supported ? now.value! : "(no longer shown)",
+          });
+          if (now?.supported) facts[name] = now;
+        }
       }
-      derive(derivations, facts);
+    }
+    derive(derivations, facts);
+    // A blocked step counts as recovered only when its end condition holds
+    // on the final page; a later plan that ends elsewhere does not excuse it.
+    for (const { planned } of unrecovered) {
+      const { subgoal, unknown } = resolve(planned, facts);
+      if (unknown.length > 0) {
+        recovered = false;
+        break;
+      }
+      const check = await endCondition(page, subgoal.done_when, stop).catch(
+        unlessCut({ holds: false, scores: [] as number[] }),
+      );
+      if (!check.holds) {
+        recovered = false;
+        break;
+      }
     }
   }
   const missing = [...report].filter((name) => !facts[name]?.supported);
-  // Done when the last plan ran to its end: a step blocked and then planned
-  // around stays in the record, but does not fail the task.
   const finished =
-    !stopped && subgoals.every((subgoal) => subgoal.status !== "skipped");
+    !stopped &&
+    recovered &&
+    subgoals.every((subgoal) => subgoal.status !== "skipped");
   return {
     status:
       finished && missing.length === 0 && conflicts.length === 0
@@ -434,23 +443,112 @@ export async function runTask(
   };
 }
 
+/** End conditions that only say something is on the page. */
+const SHOWN =
+  /\b(?:shown|displayed|visible|appears?|listed|present|available)\b/iu;
+
+/**
+ * A fact as it is named in a step. A chosen option is named by its label in
+ * an instruction, with its detail beside it, and by its detail in a check:
+ * on Peek, "3 is selected" could not be confirmed and "October 3, 2026 is
+ * selected" can. Only a fuller form of the name stands in for it: a date
+ * for its day, never a price for a product. Page text enters instructions
+ * here, so it is kept to one short line.
+ */
+function spoken(fact: Fact, use: "act" | "check" | "type"): string {
+  const line = (text: string) =>
+    text.replace(/\s+/gu, " ").trim().slice(0, MAX_NAMED);
+  const value = line(fact.value!);
+  if (
+    !fact.detail ||
+    use === "type" ||
+    normalise(fact.detail) === normalise(value) ||
+    !shows(fact.detail, value)
+  )
+    return value;
+  const detail = line(fact.detail);
+  return use === "check" ? detail : `${value} (${detail})`;
+}
+
+/**
+ * A step with every {name} filled in: from a fact, a choice, or the step's
+ * own inputs, which may themselves name a fact. Names that nothing supplies
+ * are returned, so the step does not run.
+ */
+function resolve(
+  planned: Subgoal,
+  facts: Record<string, Fact>,
+): { subgoal: Subgoal; unknown: string[] } {
+  const unknown = new Set<string>();
+  const fromFacts = (text: string, use: "act" | "check" | "type") =>
+    text.replace(PLACEHOLDER, (whole, name: string) => {
+      const fact = facts[name];
+      if (fact?.supported && fact.value) return spoken(fact, use);
+      unknown.add(name);
+      return whole;
+    });
+  const inputs =
+    planned.inputs &&
+    Object.fromEntries(
+      Object.entries(planned.inputs).map(([key, value]) => [
+        key,
+        fromFacts(value, "type"),
+      ]),
+    );
+  const fill = (text: string, use: "act" | "check") =>
+    text.replace(PLACEHOLDER, (whole, name: string) => {
+      const own = inputs?.[name];
+      if (own !== undefined && !PLACEHOLDER_ONE.test(own)) return own;
+      return fromFacts(whole, use);
+    });
+  return {
+    subgoal: {
+      ...planned,
+      goal: fill(planned.goal, "act"),
+      done_when: planned.done_when.map((statement) => fill(statement, "check")),
+      ...(inputs && { inputs }),
+    },
+    unknown: [...unknown],
+  };
+}
+
+const PLACEHOLDER = /\{([\w-]+)\}/gu;
+const PLACEHOLDER_ONE = /\{[\w-]+\}/u;
+const MAX_NAMED = 120;
+
 /**
  * A value as something to order by: a time of day as minutes, a date as a
  * timestamp, otherwise its first number, with a k or M suffix. Null when it
  * has none of these.
  */
 export function comparable(value: string): number | null {
+  if (/\bfree\b/iu.test(value)) return 0;
   const time = /\b(\d{1,2}):(\d{2})\s*([ap])\.?m\b/iu.exec(value);
-  if (time)
-    return (
-      ((Number(time[1]) % 12) + (time[3]!.toLowerCase() === "p" ? 12 : 0)) *
+  const minutes = time
+    ? ((Number(time[1]) % 12) + (time[3]!.toLowerCase() === "p" ? 12 : 0)) *
         60 +
       Number(time[2])
+    : 0;
+  // A date, with its time of day when it has one. A date without a year is
+  // taken as this year, so it orders against one that has it.
+  const iso = /\b(\d{4})-(\d{2})-(\d{2})\b/u.exec(value);
+  if (iso)
+    return (
+      Date.UTC(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3])) +
+      minutes * 60_000
     );
   if (/\p{L}{3,}/u.test(value) && /\d/u.test(value)) {
-    const date = Date.parse(value);
-    if (!Number.isNaN(date)) return date;
+    const day = value.replace(/\b\d{1,2}:\d{2}\s*[ap]\.?m\.?/giu, "");
+    const dated = /\b\d{4}\b/u.test(day)
+      ? day
+      : day.replace(
+          /(\p{L}{3,}\.?\s+\d{1,2})(?!\d)/u,
+          `$1, ${new Date().getFullYear()}`,
+        );
+    const date = Date.parse(dated);
+    if (!Number.isNaN(date)) return date + minutes * 60_000;
   }
+  if (time) return minutes;
   const number = /(\d[\d,]*(?:\.\d+)?)([kKM])?/u.exec(value);
   if (!number) return null;
   const scale = number[2] === undefined ? 1 : number[2] === "M" ? 1e6 : 1e3;
@@ -466,10 +564,12 @@ function best(values: number[], order: "min" | "max"): number {
   return winner;
 }
 
-/** Fill in each comparison once every fact it needs has been read. */
+/**
+ * Each comparison, from the facts as they are now. Recomputed every time, so
+ * a fact read again, or a comparison from a re-plan, is never left stale.
+ */
 function derive(derivations: Derivation[], facts: Record<string, Fact>) {
   for (const derivation of derivations) {
-    if (facts[derivation.name]?.supported) continue;
     const entries = Object.entries(derivation.among).map(([label, name]) => ({
       label,
       value: facts[name]?.supported ? comparable(facts[name]!.value!) : null,
@@ -524,7 +624,9 @@ async function chooseOption(
     },
     { signal },
   );
-  const page = evidence(observation, state.controls);
+  // Choosing is among alternatives, so a select's other options are
+  // evidence here, unlike when reading what is selected.
+  const page = evidence(observation, state.controls, true);
   const listed = (Array.isArray(json.items) ? json.items : []).map((item) => {
     const record = (typeof item === "object" && item ? item : {}) as Record<
       string,
@@ -534,24 +636,24 @@ async function chooseOption(
       typeof record[key] === "string" ? (record[key] as string).trim() : "";
     return { key: text("key"), value: text("value"), quote: text("quote") };
   });
-  // An option is real when a quote from the page shows it, or when it is one
-  // of the page's controls and every part of its value is on the page. A
-  // calendar day's date is its month heading plus its own button: no single
-  // passage says "October 3, 2026".
-  const controls = new Set(
-    state.controls
-      .filter((control) => control.selected !== false)
-      .map((control) => normalise(control.label)),
-  );
+  // An option must be one the page offers to act on: its name is in a
+  // control's label, which leaves out a sold-out or disabled one shown only
+  // as text. Its value must then be its own: a quote from the page shows
+  // both, or the value restates the name and every part of it is on the
+  // page. A calendar day's date is its month heading plus its own button:
+  // no single passage says "October 3, 2026", but the date contains "3".
+  const offered = (key: string) =>
+    state.controls.some((control) => shows(control.label, key));
   const items = listed
     .filter((item) => item.key !== "" && item.value !== "")
     .filter(
       (item) =>
-        (item.quote !== "" &&
+        offered(item.key) &&
+        ((item.quote !== "" &&
           page.includes(normalise(item.quote)) &&
           shows(item.quote, item.key) &&
           shows(item.quote, item.value)) ||
-        (controls.has(normalise(item.key)) && shows(page, item.value)),
+          (shows(item.value, item.key) && shows(page, item.value))),
     )
     .map((item) => ({ ...item, order: comparable(item.value) }))
     .filter((item) => item.order !== null);
@@ -897,29 +999,40 @@ async function extractFacts(
 function evidence(
   observation: PageObservation,
   controls: ReturnType<typeof pageState>["controls"],
+  alternatives = false,
 ): string {
   return normalise(
     [
       observation.text,
       ...controls
-        .filter((control) => control.selected !== false)
+        .filter((control) => alternatives || control.selected !== false)
         .flatMap((control) => [control.label, control.value ?? ""]),
     ].join("\n"),
   );
 }
 
 /**
- * Whether a quote shows a value: every number in the value is a number in the
- * quote, and every word of three or more letters is in the quote. Strict on
- * purpose: a value reworded away from its quote is dropped, not trusted.
+ * Whether a quote shows a value: every number in the value is a number in
+ * the quote, whole, so $10.20 is not $20.10; and every word of two or more
+ * letters begins a word of the quote, so "AM" is not "PM" and "Oct" is
+ * "October". A thousands separator does not count: $1,000 is $1000. Strict
+ * on purpose: a value reworded away from its quote is dropped, not trusted.
  */
 function shows(quote: string, value: string): boolean {
-  const said = normalise(quote);
-  const numbers = new Set(said.match(/\d+/gu) ?? []);
+  const parts = (text: string) => {
+    const plain = normalise(text).replace(/(\d),(?=\d{3}\b)/gu, "$1");
+    return {
+      numbers: plain.match(/\d+(?:[.:]\d+)*/gu) ?? [],
+      words: plain.match(/\p{L}{2,}/gu) ?? [],
+    };
+  };
+  const said = parts(quote);
+  const numbers = new Set(said.numbers);
+  const shown = parts(value);
   return (
-    (value.match(/\d+/gu) ?? []).every((number) => numbers.has(number)) &&
-    (normalise(value).match(/\p{L}{3,}/gu) ?? []).every((word) =>
-      said.includes(word),
+    shown.numbers.every((number) => numbers.has(number)) &&
+    shown.words.every((word) =>
+      said.words.some((candidate) => candidate.startsWith(word)),
     )
   );
 }

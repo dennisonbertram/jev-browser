@@ -714,9 +714,13 @@ export async function execute(
     }
 
     case "back": {
-      const page = getActivePage(context);
-      if (!page) throw new StalePage("no open tab to go back in");
-      await page.goBack({ waitUntil: "commit", timeout: 15_000 });
+      // Back in the tab that was observed, or not at all: once it closes,
+      // another tab's history is not this one's.
+      const observed = observation.tabs[0];
+      const page = observed && context.pages()[observed.pageIndex];
+      if (!page || page.isClosed() || page.url() !== observed.url)
+        throw new StalePage("the tab that was observed is gone or has moved");
+      await page.goBack({ waitUntil: "domcontentloaded", timeout: 15_000 });
       return { executed: action.id };
     }
 

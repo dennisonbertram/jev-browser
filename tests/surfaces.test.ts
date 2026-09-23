@@ -169,7 +169,9 @@ describe("a modal, as the review found it", () => {
     </div>`;
 
   it("offers no scrolling or key press behind it", async () => {
-    const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
+    const page = await browser.newPage({
+      viewport: { width: 1100, height: 760 },
+    });
     await page.setContent(drawer());
     await page.focus("text=Choose options");
     const actions = (await observe(page)).actions;
@@ -191,7 +193,9 @@ describe("a modal, as the review found it", () => {
   }, 30_000);
 
   it("takes the modal that is visibly on top, not the last in the page", async () => {
-    const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
+    const page = await browser.newPage({
+      viewport: { width: 800, height: 600 },
+    });
     await page.setContent(`
       <div role="dialog" aria-modal="true" style="position:fixed;inset:0;z-index:10;background:#fff"><button>Confirm A</button></div>
       <div role="dialog" aria-modal="true" style="position:fixed;left:300px;top:250px;width:200px;height:100px;z-index:1"><button>Confirm B</button></div>`);
@@ -202,7 +206,9 @@ describe("a modal, as the review found it", () => {
   }, 30_000);
 
   it("offers the options of a list the modal controls, even when rendered outside it", async () => {
-    const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
+    const page = await browser.newPage({
+      viewport: { width: 1100, height: 760 },
+    });
     await page.setContent(`${drawer(`<input role="combobox" aria-label="Colour" aria-controls="colours" aria-expanded="true">`)}
       <div id="colours" role="listbox" style="position:fixed;right:40px;top:300px;width:200px;z-index:5;background:#eee">
         <div role="option">Blue</div></div>`);
@@ -228,5 +234,35 @@ describe("frame names across processes", () => {
     await page.close();
 
     expect(one.frames[0]!.frameId).not.toBe(two.frames[0]!.frameId);
+  }, 30_000);
+});
+
+describe("going back, as the review found it", () => {
+  const route = (page: import("playwright").Page) =>
+    page.route("http://shop.test/**", (r) =>
+      r.fulfill({
+        contentType: "text/html",
+        body: `<title>${new URL(r.request().url()).pathname.slice(1)}</title><a href="/next">Next</a>`,
+      }),
+    );
+
+  it("refuses to go back when the tab it observed has closed", async () => {
+    const context = await browser.newContext();
+    const checkout = await context.newPage();
+    const other = await context.newPage();
+    await route(checkout);
+    await route(other);
+    await other.goto("http://shop.test/home");
+    await other.goto("http://shop.test/elsewhere");
+    await checkout.goto("http://shop.test/cart");
+    await checkout.goto("http://shop.test/checkout");
+    await checkout.bringToFront();
+    const observation = await observe(context);
+    const back = observation.actions.find((a) => a.kind === "back")!;
+    await checkout.close();
+
+    await expect(execute(context, observation, back)).rejects.toThrow();
+    expect(await other.title()).toBe("elsewhere");
+    await context.close();
   }, 30_000);
 });

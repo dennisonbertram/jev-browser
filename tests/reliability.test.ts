@@ -386,23 +386,39 @@ describe("an inconsistent classifier answer", () => {
     // probable one, and the whole task ended with an error.
     process.env.TYPESAFE_API_KEY = "test";
     let calls = 0;
-    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = (async (
+      _url: string | URL | Request,
+      init?: RequestInit,
+    ) => {
       const body = JSON.parse(String(init?.body ?? "{}"));
       calls += 1;
       const answers: Record<string, unknown> = {};
       for (const [name, question] of Object.entries(
-        body.questions as Record<string, { criteria: object }>
+        body.questions as Record<string, { criteria: object }>,
       )) {
         const keys = Object.keys(question.criteria);
-        const choice = name === "operation" && keys.includes("BLOCKED") ? "BLOCKED" : keys[0]!;
-        const probabilities = Object.fromEntries(keys.map((k) => [k, k === choice ? 1 : 0]));
+        const choice =
+          name === "operation" && keys.includes("BLOCKED")
+            ? "BLOCKED"
+            : keys[0]!;
+        const probabilities = Object.fromEntries(
+          keys.map((k) => [k, k === choice ? 1 : 0]),
+        );
         // The first answer names BLOCKED but gives it no probability.
         if (calls === 1) {
           for (const k of keys) probabilities[k] = k === keys[0] ? 1 : 0;
         }
-        answers[name] = { type: "choice", choice, confidence: 1, probabilities };
+        answers[name] = {
+          type: "choice",
+          choice,
+          confidence: 1,
+          probabilities,
+        };
       }
-      return Response.json({ answers, usage: { input_tokens: 1, output_tokens: 1 } });
+      return Response.json({
+        answers,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
     }) as typeof fetch;
     const { context, page } = await pageWith("<button>Go</button>");
 
@@ -410,6 +426,32 @@ describe("an inconsistent classifier answer", () => {
     await context.close();
 
     expect(calls).toBe(2);
-    expect(result.reason).toBe("the classifier judged the goal unreachable from this page");
+    expect(result.reason).toBe(
+      "the classifier judged the goal unreachable from this page",
+    );
   }, 30_000);
+});
+
+describe("going back several times", () => {
+  it("is not mistaken for going back and forth", async () => {
+    stubModels({ prefer: "BACK" });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.route("http://shop.test/**", (r) =>
+      r.fulfill({
+        contentType: "text/html",
+        body: `<title>${new URL(r.request().url()).pathname.slice(1)}</title><button>Stay</button>`,
+      }),
+    );
+    for (const step of ["p1", "p2", "p3", "p4", "p5", "p6"])
+      await page.goto(`http://shop.test/${step}`);
+
+    const result = await run(page, {
+      goal: "return to the first page",
+      isDone: async (observation) => observation.title === "p1",
+    });
+    await context.close();
+
+    expect(result.reason).toBe("the end condition is met");
+  }, 60_000);
 });
