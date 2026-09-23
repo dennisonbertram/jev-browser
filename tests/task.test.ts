@@ -37,10 +37,18 @@ type Stubs = {
   repair?: unknown;
   /** Delay before the extractor answers, honouring the request's signal. */
   extractDelayMs?: number;
+  /** Candidates the lister returns. */
+  items?: unknown[];
 };
 
 /** Route each model request to a deterministic answer. */
-function stubModels(stubs: Stubs): { classifierCalls: () => number } {
+function stubModels(stubs: Stubs): {
+  classifierCalls: () => number;
+  checked: string[];
+  goals: string[];
+} {
+  const checked: string[] = [];
+  const goals: string[] = [];
   process.env.TYPESAFE_API_KEY = "test";
   process.env.TEXT_MODEL_API_KEY = "test";
   let classifierCalls = 0;
@@ -61,6 +69,7 @@ function stubModels(stubs: Stubs): { classifierCalls: () => number } {
         >,
       )) {
         if (question.type === "noul") {
+          checked.push(String(question.instructions));
           answers[name] = {
             type: "noul",
             noul: stubs.holds(String(question.instructions), text)
@@ -70,6 +79,13 @@ function stubModels(stubs: Stubs): { classifierCalls: () => number } {
           continue;
         }
         classifierCalls += name === "operation" ? 1 : 0;
+        if (name === "operation")
+          goals.push(
+            String(
+              (question as { instructions?: { goal?: string } }).instructions
+                ?.goal,
+            ),
+          );
         const keys = Object.keys(question.criteria ?? {});
         const choice =
           name === "operation" && keys.includes(stubs.operation)
@@ -106,12 +122,14 @@ function stubModels(stubs: Stubs): { classifierCalls: () => number } {
         : stubs.plan
       : system.includes("You extract")
         ? (stubs.facts ?? {})
-        : { text: "" };
+        : system.includes("You list")
+          ? { items: stubs.items ?? [] }
+          : { text: "" };
     return Response.json({
       choices: [{ message: { content: JSON.stringify(content) } }],
     });
   }) as typeof fetch;
-  return { classifierCalls: () => classifierCalls };
+  return { classifierCalls: () => classifierCalls, checked, goals };
 }
 
 const TIMES_PAGE = `
@@ -748,4 +766,520 @@ describe("the whole-task runner", () => {
     );
     expect(result.missing).toEqual(["price"]);
   }, 30_000);
+
+  describe("choosing and comparing in code", () => {
+    const SHOP = `<ul><li>Blue mug $1,050</li><li>Red mug $980</li></ul><button>Filter</button>`;
+
+    it("chooses among quoted candidates in code, and names the choice in later steps", async () => {
+      const stub = stubModels({
+        plan: {
+          subgoals: [
+            {
+              id: "open",
+              goal: "Open {cheapest_mug}",
+              done_when: ["{cheapest_mug} is shown"],
+              collect: [],
+              choose: {
+                name: "cheapest_mug",
+                items: "mugs",
+                by: "price",
+                order: "min",
+              },
+            },
+          ],
+          report: ["cheapest_mug"],
+        },
+        operation: "CLICK",
+        holds: () => true,
+        items: [
+          { key: "Blue mug", value: "$1,050", quote: "Blue mug $1,050" },
+          { key: "Red mug", value: "$980", quote: "Red mug $980" },
+          // Not on the page: never a candidate, however cheap.
+          { key: "Green mug", value: "$5", quote: "Green mug $5" },
+        ],
+      });
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.setContent(SHOP);
+
+      const result = await runTask(page, { task: "Open the cheapest mug." });
+      await context.close();
+
+      expect(result.facts.cheapest_mug).toEqual(
+        expect.objectContaining({ value: "Red mug", supported: true }),
+      );
+      expect(result.subgoals[0]).toEqual(
+        expect.objectContaining({ goal: "Open Red mug", status: "done" }),
+      );
+      expect(stub.checked).toContain("Red mug is shown");
+      expect(result.status).toBe("done");
+    }, 30_000);
+
+    it("compares facts read on different steps, in code", async () => {
+      stubModels({
+        plan: {
+          subgoals: [
+            {
+              id: "a",
+              goal: "Show the first",
+              done_when: ["Shown"],
+              collect: ["esb_height"],
+            },
+            {
+              id: "b",
+              goal: "Show the second",
+              done_when: ["Shown"],
+              collect: ["chrysler_height"],
+            },
+          ],
+          report: ["esb_height", "chrysler_height", "taller"],
+          derive: [
+            {
+              name: "taller",
+              among: {
+                "Empire State Building": "esb_height",
+                "Chrysler Building": "chrysler_height",
+              },
+              order: "max",
+            },
+          ],
+        },
+        operation: "CLICK",
+        holds: () => true,
+        facts: {
+          esb_height: { value: "443.2 m", quote: "Empire State 443.2 m" },
+          chrysler_height: { value: "318.9 m", quote: "Chrysler 318.9 m" },
+        },
+      });
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.setContent(
+        `<p>Empire State 443.2 m. Chrysler 318.9 m.</p><button>Next</button>`,
+      );
+
+      const result = await runTask(page, { task: "Which is taller?" });
+      await context.close();
+
+      expect(result.facts.taller).toEqual(
+        expect.objectContaining({
+          value: "Empire State Building",
+          supported: true,
+        }),
+      );
+      expect(result.status).toBe("done");
+    }, 30_000);
+
+    it("does not run a step that names a value that was never found", async () => {
+      stubModels({
+        plan: {
+          subgoals: [
+            {
+              id: "list",
+              goal: "Show the mugs",
+              done_when: ["Mugs are listed"],
+              collect: [],
+              choose: {
+                name: "cheapest_mug",
+                items: "mugs",
+                by: "price",
+                order: "min",
+              },
+            },
+            {
+              id: "open",
+              goal: "Open {cheapest_mug}",
+              done_when: ["{cheapest_mug} is shown"],
+              collect: [],
+            },
+          ],
+          report: [],
+        },
+        operation: "CLICK",
+        holds: () => true,
+        items: [],
+      });
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.setContent(SHOP);
+
+      const result = await runTask(page, { task: "Open the cheapest mug." });
+      await context.close();
+
+      expect(result.subgoals[0]).toEqual(
+        expect.objectContaining({ status: "blocked" }),
+      );
+      expect(result.subgoals[1]).toEqual(
+        expect.objectContaining({ status: "skipped" }),
+      );
+      expect(result.status).toBe("incomplete");
+    }, 30_000);
+
+    it("orders times of day and dates as times and dates, not as their first number", async () => {
+      stubModels({
+        plan: {
+          subgoals: [
+            {
+              id: "list",
+              goal: "Show the times",
+              done_when: ["Times are listed"],
+              collect: [],
+              choose: {
+                name: "first_time",
+                items: "start times",
+                by: "time",
+                order: "min",
+              },
+            },
+          ],
+          report: ["first_time"],
+        },
+        operation: "CLICK",
+        holds: () => true,
+        items: [
+          { key: "11:30 AM", value: "11:30 AM", quote: "11:30 AM" },
+          { key: "2:00 PM", value: "2:00 PM", quote: "2:00 PM" },
+          { key: "9:15 AM", value: "9:15 AM", quote: "9:15 AM" },
+        ],
+      });
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.setContent(
+        `<p>11:30 AM</p><p>2:00 PM</p><p>9:15 AM</p><button>More</button>`,
+      );
+
+      const result = await runTask(page, { task: "Find the earliest time." });
+      await context.close();
+
+      expect(result.facts.first_time?.value).toBe("9:15 AM");
+    }, 30_000);
+  });
+
+  it("tells the classifier what done looks like, not only what to do", async () => {
+    // Told only "Click date picker button", the classifier clicked it once,
+    // the calendar did not open, and it declared the goal done twice.
+    const stub = stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "times",
+            goal: "Click Show times",
+            done_when: ["Start times are shown on the page"],
+            collect: [],
+          },
+        ],
+        report: [],
+      },
+      operation: "CLICK",
+      holds: (_statement, text) => text.includes("Times:"),
+    });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(TIMES_PAGE);
+
+    await runTask(page, { task: "Show the times." });
+    await context.close();
+
+    expect(stub.goals[0]).toContain("Click Show times");
+    expect(stub.goals[0]).toContain("Start times are shown on the page");
+  }, 30_000);
+
+  it("fills a subgoal's own input into its goal", async () => {
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "times",
+            goal: "Show times for {guests} guest",
+            done_when: ["Start times are shown on the page"],
+            collect: [],
+            inputs: { guests: "1" },
+          },
+        ],
+        report: [],
+      },
+      operation: "CLICK",
+      holds: (_statement, text) => text.includes("Times:"),
+    });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(TIMES_PAGE);
+
+    const result = await runTask(page, { task: "Show the times." });
+    await context.close();
+
+    expect(result.subgoals[0]).toEqual(
+      expect.objectContaining({
+        goal: "Show times for 1 guest",
+        status: "done",
+      }),
+    );
+  }, 30_000);
+
+  it("sends back an end condition that names a widget state instead of what shows", async () => {
+    // On Peek, "Date picker calendar is open" scored 0.68 with the calendar
+    // open; "A calendar showing September 2026 is visible" scored 0.98.
+    const stub = stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "open",
+            goal: "Open the times",
+            done_when: ["The times panel is open"],
+            collect: [],
+          },
+        ],
+        report: [],
+      },
+      repair: {
+        subgoals: [
+          {
+            id: "open",
+            goal: "Open the times",
+            done_when: ["Start times are shown on the page"],
+            collect: [],
+          },
+        ],
+        report: [],
+      },
+      operation: "CLICK",
+      holds: (_statement, text) => text.includes("Times:"),
+    });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(TIMES_PAGE);
+
+    const result = await runTask(page, { task: "Show the times." });
+    await context.close();
+
+    expect(result.plan.subgoals[0]!.done_when).toEqual([
+      "Start times are shown on the page",
+    ]);
+    expect(stub.checked).not.toContain("The times panel is open");
+  }, 30_000);
+
+  it("chooses among controls whose value the page shows in parts, like a calendar", async () => {
+    // A calendar day's date is its month heading plus its own button: no
+    // single passage says "October 3, 2026".
+    const stub = stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "pick",
+            goal: "Click {earliest_date}",
+            done_when: ["{earliest_date} is selected"],
+            collect: [],
+            choose: {
+              name: "earliest_date",
+              items: "enabled dates",
+              by: "date",
+              order: "min",
+            },
+          },
+        ],
+        report: ["earliest_date"],
+      },
+      operation: "CLICK",
+      holds: () => true,
+      items: [
+        { key: "10", value: "October 10, 2026", quote: "October 2026 ... 10" },
+        { key: "3", value: "October 3, 2026", quote: "October 2026 ... 3" },
+        // A control, but its value is not on the page.
+        { key: "10", value: "September 1, 2026", quote: "x" },
+        // Not a control, and not quoted.
+        { key: "1", value: "October 1, 2026", quote: "October 2026 ... 1" },
+      ],
+    });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(
+      `<h2>October 2026</h2><p>1 2</p><button>3</button><button>10</button>`,
+    );
+
+    const result = await runTask(page, { task: "Pick the earliest date." });
+    await context.close();
+
+    expect(result.facts.earliest_date?.value).toBe("3");
+    // "3 is selected" could not be checked on Peek; the full date can.
+    expect(result.subgoals[0]!.goal).toBe("Click 3 (October 3, 2026)");
+    expect(stub.checked).toContain("October 3, 2026 is selected");
+  }, 30_000);
+
+  it("waits for options that load after the page it starts on", async () => {
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "open",
+            goal: "Open {cheapest_mug}",
+            done_when: ["{cheapest_mug} is shown"],
+            collect: [],
+            choose: {
+              name: "cheapest_mug",
+              items: "mugs",
+              by: "price",
+              order: "min",
+            },
+          },
+        ],
+        report: ["cheapest_mug"],
+      },
+      operation: "CLICK",
+      holds: () => true,
+      items: [{ key: "Red mug", value: "$980", quote: "Red mug $980" }],
+    });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(`<ul id="list"></ul><button>Filter</button>
+      <script>setTimeout(() => { document.getElementById('list').innerHTML = '<li>Red mug $980</li>'; }, 1200);</script>`);
+
+    const result = await runTask(page, { task: "Open the cheapest mug." });
+    await context.close();
+
+    expect(result.facts.cheapest_mug?.value).toBe("Red mug");
+  }, 30_000);
+
+  it("counts a reading step done when every fact it reads is quoted from the page", async () => {
+    // Peek's planner kept waiting for "the start times list"; the page had
+    // one start time, which the checker would not call a list.
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "read",
+            goal: "Wait for the start times list",
+            done_when: ["A list of start times is displayed"],
+            collect: ["start_time"],
+          },
+        ],
+        report: ["start_time"],
+      },
+      operation: "WAIT",
+      holds: () => false,
+      facts: { start_time: { value: "11:30 AM", quote: "11:30 AM" } },
+    });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(
+      `<p>11:30 AM - 2 Hour(s)</p><button>Reserve</button>`,
+    );
+
+    const result = await runTask(page, { task: "Report the start times." });
+    await context.close();
+
+    expect(result.subgoals[0]).toEqual(
+      expect.objectContaining({
+        status: "done",
+        reason: "every fact it reads is on the page",
+      }),
+    );
+    expect(result.status).toBe("done");
+  }, 60_000);
+
+  it("does not count a reading step done when a fact it reads is missing", async () => {
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "read",
+            goal: "Wait for the times",
+            done_when: ["Start times are shown"],
+            collect: ["start_time", "price"],
+          },
+        ],
+        report: ["start_time", "price"],
+      },
+      operation: "WAIT",
+      holds: () => false,
+      facts: {
+        start_time: { value: "11:30 AM", quote: "11:30 AM" },
+        price: { value: "$69", quote: "$69 per person" },
+      },
+    });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(
+      `<p>11:30 AM - 2 Hour(s)</p><button>Reserve</button>`,
+    );
+
+    const result = await runTask(page, {
+      task: "Report the start times and price.",
+    });
+    await context.close();
+
+    expect(result.subgoals[0]!.status).toBe("blocked");
+    expect(result.status).toBe("incomplete");
+  }, 60_000);
+
+  it("does not count a step that had to act as done just because its facts are on the page", async () => {
+    // An earlier, wrong date still on the page must not stand in for a
+    // selection that never happened.
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "pick",
+            goal: "Click October 3",
+            done_when: ["October 3, 2026 is selected"],
+            collect: ["selected_date"],
+          },
+        ],
+        report: ["selected_date"],
+      },
+      operation: "CLICK",
+      holds: () => false,
+      facts: {
+        selected_date: { value: "October 31, 2026", quote: "October 31, 2026" },
+      },
+    });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(`<p>October 31, 2026</p><button>3</button>`);
+
+    const result = await runTask(page, { task: "Select October 3." });
+    await context.close();
+
+    expect(result.subgoals[0]!.status).toBe("blocked");
+  }, 60_000);
+
+  it("reads a missing fact again from the final page", async () => {
+    // On Peek the date field updated after the step that read it.
+    stubModels({
+      plan: {
+        subgoals: [
+          {
+            id: "pick",
+            goal: "Pick the date",
+            done_when: ["A date is chosen"],
+            collect: ["selected_date"],
+          },
+          {
+            id: "confirm",
+            goal: "Wait for the date",
+            done_when: ["Selected is shown"],
+            collect: [],
+          },
+        ],
+        report: ["selected_date"],
+      },
+      operation: "WAIT",
+      holds: (statement, text) =>
+        statement !== "Selected is shown" || text.includes("Selected"),
+      facts: {
+        selected_date: {
+          value: "October 3, 2026",
+          quote: "Selected: October 3, 2026",
+        },
+      },
+    });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(`<p id="out"></p><button>Go</button>
+      <script>setTimeout(() => { document.getElementById('out').textContent = 'Selected: October 3, 2026'; }, 1500);</script>`);
+
+    const result = await runTask(page, { task: "Pick the date." });
+    await context.close();
+
+    expect(result.facts.selected_date?.value).toBe("October 3, 2026");
+    expect(result.status).toBe("done");
+  }, 60_000);
 });
