@@ -2,7 +2,7 @@
 
 jev-browser is a TypeScript library that lets a program operate a web browser. It reads a page into a numbered table of its controls, decides which control to use, and acts on it with real mouse and keyboard input.
 
-A classifier, not a general-purpose LLM, makes each decision. The classifier is [TypeSafe's Jev](https://docs.typesafe.ai), a hosted service that answers a multiple-choice question in roughly 170 to 270 ms. A small language model runs only to write the text that goes into a field.
+A classifier, not a general-purpose LLM, makes each decision. The classifier is [TypeSafe's Jev](https://docs.typesafe.ai), a hosted service that answers a multiple-choice question in roughly 170 to 270 ms. A small language model writes the text that goes into a field and plans the task steps.
 
 ## Result
 
@@ -42,10 +42,10 @@ npm install @dennisonbertram/jev-browser
 npx playwright install chromium
 ```
 
-Two keys go in `.env` (see `.env.example`). Neither belongs in your repository.
+Two keys go in `.env` (see `.env.example`). Neither belongs in your repository. The library does not read `.env` itself, so load it into your shell first: `set -a; . .env; set +a`.
 
 - `TYPESAFE_API_KEY` is the classifier, from <https://docs.typesafe.ai>. Every task needs it.
-- `TEXT_MODEL_API_KEY` is a second, small model that writes the value for a field. Only a task that types needs it. Any endpoint that speaks the OpenAI chat-completions protocol works, set with `TEXT_MODEL_BASE_URL` and `TEXT_MODEL`:
+- `TEXT_MODEL_API_KEY` is a second, small model that writes the value for a field. `run` and `runOnce` need it only for tasks that type; `runTask` plans with it, so it always needs it. Any endpoint that speaks the OpenAI chat-completions protocol works, set with `TEXT_MODEL_BASE_URL` and `TEXT_MODEL`:
 
 | Provider | `TEXT_MODEL_BASE_URL` | A model that fits |
 | --- | --- | --- |
@@ -68,7 +68,7 @@ console.log(result.status, result.reason, result.elapsedMs);
 await browser.close();
 ```
 
-`runOnce(browser, url, { goal })` opens a fresh context for a single task. Pass `launchLocal({ headless: false })` to watch it work.
+`runOnce(browser, url, { goal })` opens a fresh context for a single task. To watch it work, `const session = await launchLocal({ headless: false })` and pass `session.browser` as the browser.
 
 To work on the library itself:
 
@@ -175,7 +175,7 @@ npx tsx examples/flights.ts 5    # one hard journey on Google Flights
 
 ### Comparison with jev-ultrafast, a negative result
 
-`jev-ultrafast` reports 7.073 s for the same Google Flights journey, in 17 decisions. This library is slower. Its median over twelve runs is 10.1 s, and its best single run is 8.45 s. Repeated batches of five runs on identical code gave 8.87 s and 10.53 s, so five runs is too few to state a median. The difference is classifier time: this library makes 22 calls to their 17, at about 225 ms each. Browser time (about 3.5 s) is below the roughly 4 s their figures imply. Even if the per-call latency were equal to theirs, this library would still be about 0.7 s behind, because of the five extra calls.
+`jev-ultrafast` reports 7.073 s for the same Google Flights journey, in 17 decisions. This library is slower. Its median over twelve runs is 10.1 s, and its best single run is 8.45 s. The 7.073 s figure is one demonstration run, not a median. Repeated batches of five runs on identical code gave 8.87 s and 10.53 s, so five runs is too few to state a median. The difference is classifier time: this library makes 22 calls to their 17, at about 225 ms each. Browser time (about 3.5 s) is below the roughly 4 s their figures imply. Computed from the 8.87 s five-run batch (not the 10.1 s median), even at their per-call latency this library would still be about 0.7 s behind, because of the five extra calls.
 
 The extra calls are decisions thrown away because the page changed while the model was answering. About 5.4 s is the floor with nothing wasted. Ten attempts to recover the wasted decisions measured slower against a baseline, except two that were kept: focusing the chosen node directly when the click did not, and remembering classifier answers within a run. The rejected attempts were re-using a discarded decision, dropping or narrowing the freshness checks, asking the classifier during the settle wait, a longer quiet window, and abandoning a call once the page moved. They cut decisions but cost more time than they saved, because reading the page during a request raised each call's latency from about 200 ms to between 210 and 400 ms. Payload size is not a lever: latency is flat (161 to 210 ms) between 1,249 and 3,616 input tokens.
 
